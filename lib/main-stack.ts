@@ -13,7 +13,10 @@ import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import * as logs from 'aws-cdk-lib/aws-logs';
-import { Construct } from 'constructs'; 
+import * as acm from 'aws-cdk-lib/aws-certificatemanager';
+import * as route53 from 'aws-cdk-lib/aws-route53';
+import * as targets from 'aws-cdk-lib/aws-route53-targets';
+import { Construct } from 'constructs';
 
 export class MainStack extends cdk.Stack {
     public readonly bucket: s3.Bucket;
@@ -22,6 +25,23 @@ export class MainStack extends cdk.Stack {
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
         super(scope, id, props);
 
+        const domainName = 'app.0gnodehub.com';
+        const zoneName = '0gnodehub.com'; // The root domain
+
+        const certificateArn = 'arn:aws:acm:us-east-1:057386374967:certificate/8bdf3cbf-c1bd-474c-a2f3-9e200e4f2d26';
+
+        // Look up the existing hosted zone
+        const hostedZone = route53.HostedZone.fromLookup(this, 'HostedZone', {
+            domainName: zoneName,
+        });
+
+        // Import the manually created certificate
+        const certificate = acm.Certificate.fromCertificateArn(
+            this, 
+            'Certificate',
+            certificateArn
+        );
+ 
         // S3 bucket for hosting the static site
         this.bucket = new s3.Bucket(this, 'FrontendBucket', {
             removalPolicy: cdk.RemovalPolicy.DESTROY,
@@ -38,6 +58,8 @@ export class MainStack extends cdk.Stack {
 
         // CloudFront distribution
         this.distribution = new cloudfront.Distribution(this, 'Distribution', {
+            domainNames: [domainName],
+            certificate: certificate,
             defaultRootObject: 'index.html',
             errorResponses: [
                 {
@@ -80,6 +102,24 @@ export class MainStack extends cdk.Stack {
             },
         });
 
+        // Create A record to point domain to CloudFront
+        new route53.ARecord(this, 'AliasRecord', {
+            zone: hostedZone,
+            recordName: 'app', // This creates app.0gnodehub.com
+            target: route53.RecordTarget.fromAlias(
+                new targets.CloudFrontTarget(this.distribution)
+            ),
+        });
+
+        // Optional: Create AAAA record for IPv6 support
+        new route53.AaaaRecord(this, 'AliasRecordAAAA', {
+            zone: hostedZone,
+            recordName: 'app',
+            target: route53.RecordTarget.fromAlias(
+                new targets.CloudFrontTarget(this.distribution)
+            ),
+        });
+
         // Deploy the frontend
         new s3deploy.BucketDeployment(this, 'DeployFrontend', {
             sources: [
@@ -93,8 +133,14 @@ export class MainStack extends cdk.Stack {
             ephemeralStorageSize: cdk.Size.mebibytes(512),
         });
 
-        // Output the CloudFront URL
+        // Output the custom domain URL
         new cdk.CfnOutput(this, 'FrontendUrl', {
+            value: `https://${domainName}`,
+            description: 'Frontend Custom Domain URL'
+        });
+
+        // Output the CloudFront URL as backup
+        new cdk.CfnOutput(this, 'CloudFrontUrl', {
             value: `https://${this.distribution.distributionDomainName}`,
             description: 'Frontend CloudFront URL'
         });
