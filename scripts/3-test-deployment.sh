@@ -29,20 +29,21 @@ fi
 echo -e "${GREEN}✅ Using API URL: $API_URL${NC}"
 echo -e "${GREEN}✅ Using Deployment Domain: $DEPLOYMENT_DOMAIN${NC}"
 
-# Test wallet address (example)
-TEST_WALLET="0x1234567890123456789012345678901234567890"
-TEST_PRIVATE_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+# Test wallet address (put yours)
+TEST_WALLET=""
+TEST_PRIVATE_KEY=""
 
 echo ""
 echo -e "${YELLOW}🚀 Test 1: Creating a test deployment${NC}"
+
 
 # Create a test deployment
 DEPLOYMENT_RESPONSE=$(curl -s -X POST "$API_URL/deployments" \
   -H 'Content-Type: application/json' \
   -d "{
     \"walletAddress\": \"$TEST_WALLET\",
-    \"modelService\": \"nginx:latest\",
-    \"modelIdentifier\": \"test-nginx-model\",
+    \"modelService\": \"Llama 3.3\",
+    \"modelIdentifier\": \"llama-3.3-70b-instruct\",
     \"walletPrivateKey\": \"$TEST_PRIVATE_KEY\",
     \"verificationMethod\": \"TeeML\"
   }")
@@ -92,22 +93,34 @@ echo -e "${GREEN}📊 Total Deployments: $DEPLOYMENT_COUNT${NC}"
 echo ""
 echo -e "${YELLOW}⏳ Test 4: Waiting for deployment to become ready${NC}"
 
-# Wait for deployment to be ready (up to 5 minutes)
+# Wait for deployment to be ready and accessible (up to 5 minutes)
 for i in {1..30}; do
     echo -e "${YELLOW}⏳ Checking deployment status... ($i/30)${NC}"
     
     STATUS_RESPONSE=$(curl -s "$API_URL/deployments/$TEST_WALLET/$DEPLOYMENT_ID")
-    STATUS=$(echo "$STATUS_RESPONSE" | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
+    STATUS=$(echo "$STATUS_RESPONSE" | sed -n 's/.*"status":"\([^"]*\)".*/\1/p')
+    PUBLIC_ENDPOINT=$(echo "$STATUS_RESPONSE" | sed -n 's/.*"publicEndpoint":"\([^"]*\)".*/\1/p')
     
-    echo "Current status: $STATUS"
+    echo "Current status: '$STATUS'"
+    echo "Public endpoint: '$PUBLIC_ENDPOINT'"
     
-    if [ "$STATUS" = "DEPLOYED" ]; then
-        echo -e "${GREEN}✅ Deployment is ready!${NC}"
-        break
-    elif [ "$STATUS" = "FAILED" ]; then
+    if [ "$STATUS" = "FAILED" ]; then
         echo -e "${RED}❌ Deployment failed!${NC}"
         echo "Response: $STATUS_RESPONSE"
         break
+    elif [ "$STATUS" = "ACTIVE" ] && [ ! -z "$PUBLIC_ENDPOINT" ]; then
+        echo -e "${YELLOW}🌐 Testing endpoint accessibility...${NC}"
+        
+        # Test if the endpoint is actually accessible
+        if curl -f -s -m 10 "$PUBLIC_ENDPOINT" > /dev/null 2>&1; then
+            echo -e "${GREEN}✅ Deployment is ready and accessible!${NC}"
+            break
+        elif curl -f -s -m 10 "$PUBLIC_ENDPOINT/health" > /dev/null 2>&1; then
+            echo -e "${GREEN}✅ Deployment is ready (health endpoint accessible)!${NC}"
+            break
+        else
+            echo -e "${YELLOW}⚠️  Endpoint not yet accessible, waiting...${NC}"
+        fi
     fi
     
     sleep 10
@@ -116,7 +129,7 @@ done
 echo ""
 echo -e "${YELLOW}🌐 Test 5: Testing public endpoint (if ready)${NC}"
 
-if [ "$STATUS" = "DEPLOYED" ] && [ ! -z "$PUBLIC_ENDPOINT" ]; then
+if [ "$STATUS" = "ACTIVE" ] && [ ! -z "$PUBLIC_ENDPOINT" ]; then
     echo -e "${YELLOW}🔗 Testing endpoint: $PUBLIC_ENDPOINT${NC}"
     
     # Test the public endpoint (with timeout)

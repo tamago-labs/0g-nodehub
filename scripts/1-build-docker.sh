@@ -147,17 +147,6 @@ envsubst < /tmp/config.base.yaml > config.local.yaml
 echo "📝 Generated configuration:"
 cat config.local.yaml
 
-# Wait for target service
-echo "⏳ Waiting for target service at $TARGET_URL..."
-for i in {1..30}; do
-  if curl -f "$TARGET_URL/health" 2>/dev/null || curl -f "$TARGET_URL/" 2>/dev/null || curl -f "$TARGET_URL/v1/models" 2>/dev/null; then
-    echo "✅ Target service is ready!"
-    break
-  fi
-  echo "⏳ Target service not ready, waiting 10 seconds... ($i/30)"
-  sleep 10
-done
-
 # Find broker executable
 BROKER_EXECUTABLE=""
 if [ -f "./broker" ]; then

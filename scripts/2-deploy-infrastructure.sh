@@ -35,23 +35,6 @@ if [ ! -d "node_modules" ]; then
     npm install
 fi
 
-# Install Lambda dependencies
-echo -e "${YELLOW}📦 Installing Lambda dependencies...${NC}"
-cd lambda
-if [ ! -d "node_modules" ]; then
-    npm install
-fi
-cd ..
-
-# Check if Docker image has been built
-if [ ! -f ".docker-image-uri" ]; then
-    echo -e "${RED}❌ Docker image not found. Please run './build-docker.sh' first.${NC}"
-    exit 1
-fi
-
-DOCKER_IMAGE_URI=$(cat .docker-image-uri)
-echo -e "${GREEN}✅ Using Docker image: $DOCKER_IMAGE_URI${NC}"
-
 # Create IAM role for ECS task execution if it doesn't exist
 echo -e "${YELLOW}🔐 Setting up ECS Task Execution Role...${NC}"
 if ! aws iam get-role --role-name ecsTaskExecutionRole > /dev/null 2>&1; then
@@ -79,10 +62,18 @@ EOF
         --role-name ecsTaskExecutionRole \
         --assume-role-policy-document file:///tmp/trust-policy.json
 
-    # Attach the managed policy
+    # Attach the managed policies
     aws iam attach-role-policy \
         --role-name ecsTaskExecutionRole \
         --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+    aws iam attach-role-policy \
+        --role-name ecsTaskExecutionRole \
+        --policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+
+    # Wait for role to be available
+    echo "Waiting for role to be available..."
+    sleep 10
 
     echo -e "${GREEN}✅ ECS Task Execution Role created${NC}"
 else
