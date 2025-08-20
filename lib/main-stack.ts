@@ -7,7 +7,7 @@ import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2'; 
+import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
@@ -37,7 +37,7 @@ export class MainStack extends cdk.Stack {
         const domainName = 'app.0gnodehub.com';
         const deploymentDomain = 'deploy.0gnodehub.com'; // Base domain for deployments
         const certificateArn = 'arn:aws:acm:us-east-1:057386374967:certificate/8bdf3cbf-c1bd-474c-a2f3-9e200e4f2d26';
-
+        const brokerImageUri = '057386374967.dkr.ecr.ap-southeast-1.amazonaws.com/0g-inference-broker:latest'; // V.2.1
 
         // Look up the existing hosted zone
         this.hostedZone = route53.HostedZone.fromLookup(this, 'HostedZone', {
@@ -118,6 +118,7 @@ export class MainStack extends cdk.Stack {
             }),
         });
 
+
         // Create wildcard A record for *.deploy.0gnodehub.com -> Load Balancer
         new route53.ARecord(this, 'DeploymentWildcardRecord', {
             zone: this.hostedZone,
@@ -130,11 +131,150 @@ export class MainStack extends cdk.Stack {
         // ========================================
         // CONTAINER REGISTRY - ECR
         // ========================================
+
+
         const ecrRepository = new ecr.Repository(this, 'InferenceRegistry', {
             repositoryName: '0g-inference-broker',
             removalPolicy: cdk.RemovalPolicy.DESTROY,
             imageTagMutability: ecr.TagMutability.MUTABLE,
         });
+
+        // ========================================
+        // DATABASE - DynamoDB
+        // ========================================
+
+        const deploymentsTable = new dynamodb.Table(this, 'DeploymentsTable', {
+            tableName: 'nodehub-deployments',
+            partitionKey: { name: 'walletAddress', type: dynamodb.AttributeType.STRING }, // use wallet address connected
+            sortKey: { name: 'deploymentId', type: dynamodb.AttributeType.STRING },
+            billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+            removalPolicy: cdk.RemovalPolicy.DESTROY,
+        });
+
+        // Add GSI for querying by status
+        deploymentsTable.addGlobalSecondaryIndex({
+            indexName: 'StatusIndex',
+            partitionKey: { name: 'status', type: dynamodb.AttributeType.STRING },
+            sortKey: { name: 'createdAt', type: dynamodb.AttributeType.STRING },
+        });
+
+        // ========================================
+        // LAMBDA FUNCTIONS
+        // ========================================
+
+        // CloudWatch Log Group for Lambda functions
+        const lambdaLogGroup = new logs.LogGroup(this, 'LambdaLogGroup', {
+            logGroupName: '/aws/lambda/nodehub',
+            retention: logs.RetentionDays.ONE_WEEK,
+            removalPolicy: cdk.RemovalPolicy.DESTROY,
+        });
+
+        // Deployment Lambda Function
+        const deploymentFunction = new lambda.Function(this, 'DeploymentFunction', {
+            runtime: lambda.Runtime.NODEJS_18_X,
+            handler: 'deployment.handler',
+            code: lambda.Code.fromAsset('lambda'),
+            timeout: cdk.Duration.minutes(15),
+            memorySize: 1024,
+            logGroup: lambdaLogGroup,
+            environment: {
+                CLUSTER_NAME: this.cluster.clusterName,
+                DEPLOYMENTS_TABLE: deploymentsTable.tableName,
+                VPC_ID: vpc.vpcId,
+                ALB_ARN: this.loadBalancer.loadBalancerArn,
+                HTTPS_LISTENER_ARN: httpsListener.listenerArn,
+                ECR_REPOSITORY_URI: ecrRepository.repositoryUri,
+                BROKER_IMAGE_URI: brokerImageUri,
+                SUBNETS: vpc.publicSubnets.map(subnet => subnet.subnetId).join(','),
+                DOMAIN_NAME: zoneName,
+                DEPLOYMENT_DOMAIN: deploymentDomain,
+                HOSTED_ZONE_ID: this.hostedZone.hostedZoneId,
+                LOAD_BALANCER_DNS: this.loadBalancer.loadBalancerDnsName
+            },
+        });
+
+        // Management Lambda Function
+        const managementFunction = new lambda.Function(this, 'ManagementFunction', {
+            runtime: lambda.Runtime.NODEJS_18_X,
+            handler: 'management.handler',
+            code: lambda.Code.fromAsset('lambda'),
+            timeout: cdk.Duration.minutes(5),
+            logGroup: lambdaLogGroup,
+            environment: {
+                CLUSTER_NAME: this.cluster.clusterName,
+                DEPLOYMENTS_TABLE: deploymentsTable.tableName,
+            },
+        });
+
+        // ========================================
+        // BECKEND PERMISSIONS
+        // ========================================
+        deploymentsTable.grantReadWriteData(deploymentFunction);
+        deploymentsTable.grantReadWriteData(managementFunction);
+        ecrRepository.grantPullPush(deploymentFunction);
+
+        // ECS and Load Balancer permissions
+        const ecsPolicy = new iam.PolicyStatement({
+            effect: iam.Effect.ALLOW,
+            actions: [
+                'ecs:*',
+                'ec2:DescribeNetworkInterfaces',
+                'ec2:DescribeSubnets',
+                'ec2:DescribeSecurityGroups',
+                'ec2:CreateSecurityGroup',
+                'ec2:AuthorizeSecurityGroupIngress',
+                'elasticloadbalancing:*',
+                'logs:CreateLogGroup',
+                'logs:CreateLogStream',
+                'logs:PutLogEvents',
+                'logs:FilterLogEvents',
+                'logs:DescribeLogStreams'
+            ],
+            resources: ['*']
+        });
+
+        deploymentFunction.addToRolePolicy(ecsPolicy);
+        managementFunction.addToRolePolicy(ecsPolicy);
+
+        // Route53 permissions for creating subdomains
+        const route53Policy = new iam.PolicyStatement({
+            effect: iam.Effect.ALLOW,
+            actions: [
+                'route53:ChangeResourceRecordSets',
+                'route53:GetHostedZone',
+                'route53:ListResourceRecordSets'
+            ],
+            resources: [
+                `arn:aws:route53:::hostedzone/${this.hostedZone.hostedZoneId}`
+            ]
+        });
+
+        deploymentFunction.addToRolePolicy(route53Policy);
+        managementFunction.addToRolePolicy(route53Policy);
+
+        // ========================================
+        // API GATEWAY
+        // ========================================
+        this.api = new apigateway.RestApi(this, 'NodeHubProviderAPI', {
+            restApiName: 'NodeHub API',
+            description: 'API for managing 0G node deployments',
+            defaultCorsPreflightOptions: {
+                allowOrigins: apigateway.Cors.ALL_ORIGINS,
+                allowMethods: apigateway.Cors.ALL_METHODS,
+                allowHeaders: ['Content-Type', 'X-Amz-Date', 'Authorization', 'X-Api-Key'],
+            },
+        });
+
+        // API Resources
+        const deploymentsResource = this.api.root.addResource('deployments');
+        const walletResource = deploymentsResource.addResource('{walletAddress}');
+        const deploymentResource = walletResource.addResource('{deploymentId}');
+
+        // API Methods (no authentication for now)
+        deploymentsResource.addMethod('POST', new apigateway.LambdaIntegration(deploymentFunction));
+        walletResource.addMethod('GET', new apigateway.LambdaIntegration(managementFunction));
+        deploymentResource.addMethod('GET', new apigateway.LambdaIntegration(managementFunction));
+        deploymentResource.addMethod('DELETE', new apigateway.LambdaIntegration(managementFunction));
 
         // ========================================
         // FRONTEND
@@ -235,7 +375,26 @@ export class MainStack extends cdk.Stack {
         // OUTPUTS
         // ========================================
 
-        // Output the custom domain URL
+        new cdk.CfnOutput(this, 'ApiEndpoint', {
+            value: this.api.url,
+            description: 'API Gateway endpoint'
+        });
+
+        new cdk.CfnOutput(this, 'DeploymentDomain', {
+            value: `https://*.${deploymentDomain}`,
+            description: 'Base domain for node deployments'
+        });
+
+        new cdk.CfnOutput(this, 'ExampleDeploymentURL', {
+            value: `https://[deployment-id].${deploymentDomain}`,
+            description: 'Example deployment URL pattern'
+        });
+
+        new cdk.CfnOutput(this, 'DeploymentsTableName', {
+            value: deploymentsTable.tableName,
+            description: 'DynamoDB deployments table name'
+        });
+
         new cdk.CfnOutput(this, 'FrontendUrl', {
             value: `https://${domainName}`,
             description: 'Frontend Custom Domain URL'
