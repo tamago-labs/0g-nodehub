@@ -2,5 +2,10 @@
   "hosted-zone:account=057386374967:domainName=0gnodehub.com:region=ap-southeast-1": {
     "Id": "/hostedzone/Z07717932Q246YWDRDDXD",
     "Name": "0gnodehub.com."
-  }
+  },
+  "availability-zones:account=057386374967:region=ap-southeast-1": [
+    "ap-southeast-1a",
+    "ap-southeast-1b",
+    "ap-southeast-1c"
+  ]
 }
