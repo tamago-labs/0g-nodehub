@@ -304,13 +304,13 @@ export class MainStack extends cdk.Stack {
                     httpStatus: 403,
                     responseHttpStatus: 200,
                     responsePagePath: '/index.html',
-                    ttl: cdk.Duration.minutes(5),
+                    ttl: cdk.Duration.seconds(10),
                 },
                 {
                     httpStatus: 404,
                     responseHttpStatus: 200,
                     responsePagePath: '/index.html',
-                    ttl: cdk.Duration.minutes(5),
+                    ttl: cdk.Duration.seconds(10),
                 },
             ],
             defaultBehavior: {
@@ -318,24 +318,66 @@ export class MainStack extends cdk.Stack {
                     originAccessIdentity,
                 }),
                 viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-                cachePolicy: new cloudfront.CachePolicy(this, 'CachePolicy', {
-                    cachePolicyName: `nodehub-cache-policy-${cdk.Aws.ACCOUNT_ID}`,
-                    defaultTtl: cdk.Duration.hours(24),
-                    maxTtl: cdk.Duration.days(365),
-                    minTtl: cdk.Duration.seconds(0),
-                    headerBehavior: cloudfront.CacheHeaderBehavior.none(),
-                    queryStringBehavior: cloudfront.CacheQueryStringBehavior.none(),
-                    cookieBehavior: cloudfront.CacheCookieBehavior.none(),
-                }),
+                cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED, // Disable caching for SPA
             },
             additionalBehaviors: {
-                // Cache API calls for a shorter time
-                '/api/*': {
+                // Cache static assets (JS, CSS, images) for longer
+                '_next/*': {
                     origin: new origins.S3Origin(this.bucket, {
                         originAccessIdentity,
                     }),
                     viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-                    cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+                    cachePolicy: new cloudfront.CachePolicy(this, 'StaticAssetsCachePolicy', {
+                        cachePolicyName: `nodehub-static-cache-policy-${cdk.Aws.ACCOUNT_ID}`,
+                        defaultTtl: cdk.Duration.days(30),
+                        maxTtl: cdk.Duration.days(365),
+                        minTtl: cdk.Duration.seconds(0),
+                        headerBehavior: cloudfront.CacheHeaderBehavior.none(),
+                        queryStringBehavior: cloudfront.CacheQueryStringBehavior.none(),
+                        cookieBehavior: cloudfront.CacheCookieBehavior.none(),
+                    }),
+                },
+                '*.js': {
+                    origin: new origins.S3Origin(this.bucket, {
+                        originAccessIdentity,
+                    }),
+                    viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                    cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+                },
+                '*.css': {
+                    origin: new origins.S3Origin(this.bucket, {
+                        originAccessIdentity,
+                    }),
+                    viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                    cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+                },
+                '*.png': {
+                    origin: new origins.S3Origin(this.bucket, {
+                        originAccessIdentity,
+                    }),
+                    viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                    cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+                },
+                '*.jpg': {
+                    origin: new origins.S3Origin(this.bucket, {
+                        originAccessIdentity,
+                    }),
+                    viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                    cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+                },
+                '*.svg': {
+                    origin: new origins.S3Origin(this.bucket, {
+                        originAccessIdentity,
+                    }),
+                    viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                    cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+                },
+                '*.ico': {
+                    origin: new origins.S3Origin(this.bucket, {
+                        originAccessIdentity,
+                    }),
+                    viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                    cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
                 },
             },
         });

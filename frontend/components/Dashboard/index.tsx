@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { Play, Settings, Trash2, X, Copy, CheckCircle, XCircle, Activity, Zap, Clock, Eye, ExternalLink, AlertTriangle, Loader2 } from 'lucide-react';
+import Link from 'next/link';
 import { useAccount } from 'wagmi';
 import { deploymentService } from '@/lib/api';
 import { useToast } from '@/contexts/ToastContext';
@@ -167,9 +168,9 @@ const Dashboard = () => {
             <h1 className="text-3xl font-bold text-gray-900 mb-2">Dashboard</h1>
             <p className="text-gray-600">Manage and monitor your 0G network nodes</p>
           </div>
-          <a href="/setup" className="bg-gradient-to-r from-blue-600 to-purple-600 text-white px-4 py-2 rounded-lg font-medium hover:from-blue-700 hover:to-purple-700 transition-all duration-200 shadow-sm hover:shadow-md">
+          <Link href="/setup" className="bg-gradient-to-r from-blue-600 to-purple-600 text-white px-4 py-2 rounded-lg font-medium hover:from-blue-700 hover:to-purple-700 transition-all duration-200 shadow-sm hover:shadow-md">
             Create New Node
-          </a>
+          </Link>
         </div>
       </div>
 
@@ -213,12 +214,12 @@ const Dashboard = () => {
             <p className="text-gray-600 mb-4">
               You haven't deployed any nodes yet. Create your first node to get started.
             </p>
-            <a
+            <Link
               href="/setup"
               className="bg-gradient-to-r from-blue-600 to-purple-600 text-white px-6 py-3 rounded-lg font-medium hover:from-blue-700 hover:to-purple-700 transition-all duration-200 shadow-sm hover:shadow-md"
             >
               Deploy Your First Node
-            </a>
+            </Link>
           </div>
         </div>
       )}

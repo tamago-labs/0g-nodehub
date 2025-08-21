@@ -46,7 +46,7 @@ const Header = () => {
                     {/* Desktop Navigation */}
                     <nav className="hidden md:flex space-x-8">
                         {navigation.map((item) => (
-                            <a
+                            <Link
                                 key={item.name}
                                 href={item.href}
                                 className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${item.href === path
@@ -55,7 +55,7 @@ const Header = () => {
                                     }`}
                             >
                                 {item.name}
-                            </a>
+                            </Link>
                         ))}
                     </nav>
 
@@ -153,16 +153,18 @@ const Header = () => {
                     <div className="md:hidden border-t border-gray-200 pt-4 pb-4">
                         <nav className="space-y-2">
                             {navigation.map((item) => (
-                                <a
+                                <Link
                                     key={item.name}
                                     href={item.href}
-                                    className={`block px-3 py-2 rounded-md text-base font-medium transition-colors ${item.active
-                                        ? 'text-blue-600 bg-blue-50'
-                                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
-                                        }`}
+                                    className={`block px-3 py-2 rounded-md text-base font-medium transition-colors ${
+                                        item.href === path
+                                            ? 'text-blue-600 bg-blue-50'
+                                            : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                                    }`}
+                                    onClick={() => setIsMobileMenuOpen(false)}
                                 >
                                     {item.name}
-                                </a>
+                                </Link>
                             ))}
                         </nav>
 
