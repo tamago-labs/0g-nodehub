@@ -4,24 +4,17 @@ import React, { useState } from 'react';
 import { ChevronDown, Wallet, Menu, X, Diamond } from 'lucide-react';
 import Link from "next/link"
 import { usePathname } from "next/navigation"
+import { ConnectButton } from '@rainbow-me/rainbowkit';
+import { useAccount } from 'wagmi';
 
 const Header = () => {
 
     const path = usePathname()
-
-    const [isWalletConnected, setIsWalletConnected] = useState(false);
-    const [walletAddress, setWalletAddress] = useState('');
+    const { address, isConnected } = useAccount();
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-    const handleConnectWallet = () => {
-        // Simulate wallet connection
-        if (!isWalletConnected) {
-            setIsWalletConnected(true);
-            setWalletAddress('0x1234...5678');
-        } else {
-            setIsWalletConnected(false);
-            setWalletAddress('');
-        }
+    const formatAddress = (addr: string) => {
+        return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
     };
 
     const navigation = [
@@ -37,7 +30,7 @@ const Header = () => {
                 <div className="flex justify-between items-center h-16">
                     {/* Logo */}
                     <div className="flex items-center">
-                        <Link href="https://www.0gnodehub.com" target="_blank" className="flex-shrink-0 flex items-center">
+                        <Link href="/" className="flex-shrink-0 flex items-center">
                             <span className="ml-3 font-mono text-xl font-semibold 
                        bg-gradient-to-r from-blue-600 via-purple-600 to-blue-600 
                        bg-clip-text text-transparent
@@ -70,22 +63,73 @@ const Header = () => {
                     <div className="flex items-center">
                         {/* Desktop Wallet Button */}
                         <div className="hidden md:block">
-                            {isWalletConnected ? (
-                                <div className="flex items-center space-x-2">
-                                    <div className="flex items-center space-x-2 bg-green-50 text-green-700 px-3 py-2 rounded-lg border border-green-200">
-                                        <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                                        <span className="text-sm font-medium">{walletAddress}</span>
-                                        <ChevronDown className="w-4 h-4" />
-                                    </div>
-                                </div>
-                            ) : (
-                                <button
-                                    onClick={handleConnectWallet}
-                                    className="flex items-center space-x-2 bg-gradient-to-r from-blue-600 to-purple-600 text-white px-4 py-2 rounded-lg font-medium hover:from-blue-700 hover:to-purple-700 transition-all duration-200 shadow-sm hover:shadow-md"
-                                >
-                                    <span>Connect Wallet</span>
-                                </button>
-                            )}
+                            <ConnectButton.Custom>
+                                {({
+                                    account,
+                                    chain,
+                                    openAccountModal,
+                                    openChainModal,
+                                    openConnectModal,
+                                    authenticationStatus,
+                                    mounted,
+                                }) => {
+                                    const ready = mounted && authenticationStatus !== 'loading';
+                                    const connected =
+                                        ready &&
+                                        account &&
+                                        chain &&
+                                        (!authenticationStatus ||
+                                            authenticationStatus === 'authenticated');
+
+                                    return (
+                                        <div
+                                            {...(!ready && {
+                                                'aria-hidden': true,
+                                                'style': {
+                                                    opacity: 0,
+                                                    pointerEvents: 'none',
+                                                    userSelect: 'none',
+                                                },
+                                            })}
+                                        >
+                                            {(() => {
+                                                if (!connected) {
+                                                    return (
+                                                        <button
+                                                            onClick={openConnectModal}
+                                                            className="flex items-center space-x-2 bg-gradient-to-r from-blue-600 to-purple-600 text-white px-4 py-2 rounded-lg font-medium hover:from-blue-700 hover:to-purple-700 transition-all duration-200 shadow-sm hover:shadow-md"
+                                                        >
+                                                            <span>Connect Wallet</span>
+                                                        </button>
+                                                    );
+                                                }
+
+                                                if (chain.unsupported) {
+                                                    return (
+                                                        <button
+                                                            onClick={openChainModal}
+                                                            className="flex items-center space-x-2 bg-red-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-red-700 transition-all duration-200"
+                                                        >
+                                                            Wrong network
+                                                        </button>
+                                                    );
+                                                }
+
+                                                return (
+                                                    <div className="flex items-center space-x-2">
+                                                        <div className="flex items-center space-x-2 bg-green-50 text-green-700 px-3 py-2 rounded-lg border border-green-200 cursor-pointer"
+                                                             onClick={openAccountModal}>
+                                                            <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                                                            <span className="text-sm font-medium">{formatAddress(account.address)}</span>
+                                                            <ChevronDown className="w-4 h-4" />
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })()}
+                                        </div>
+                                    );
+                                }}
+                            </ConnectButton.Custom>
                         </div>
 
                         {/* Mobile menu button */}
@@ -124,21 +168,72 @@ const Header = () => {
 
                         {/* Mobile Wallet Button */}
                         <div className="pt-4 border-t border-gray-200 mt-4">
-                            {isWalletConnected ? (
-                                <div className="flex items-center space-x-2 bg-green-50 text-green-700 px-3 py-2 rounded-lg border border-green-200">
-                                    <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                                    <span className="text-sm font-medium">{walletAddress}</span>
-                                    <ChevronDown className="w-4 h-4" />
-                                </div>
-                            ) : (
-                                <button
-                                    onClick={handleConnectWallet}
-                                    className="w-full flex items-center justify-center space-x-2 bg-gradient-to-r from-blue-600 to-purple-600 text-white px-4 py-2 rounded-lg font-medium hover:from-blue-700 hover:to-purple-700 transition-all duration-200"
-                                >
-                                    <Wallet className="w-4 h-4" />
-                                    <span>Connect Wallet</span>
-                                </button>
-                            )}
+                            <ConnectButton.Custom>
+                                {({
+                                    account,
+                                    chain,
+                                    openAccountModal,
+                                    openChainModal,
+                                    openConnectModal,
+                                    authenticationStatus,
+                                    mounted,
+                                }) => {
+                                    const ready = mounted && authenticationStatus !== 'loading';
+                                    const connected =
+                                        ready &&
+                                        account &&
+                                        chain &&
+                                        (!authenticationStatus ||
+                                            authenticationStatus === 'authenticated');
+
+                                    return (
+                                        <div
+                                            {...(!ready && {
+                                                'aria-hidden': true,
+                                                'style': {
+                                                    opacity: 0,
+                                                    pointerEvents: 'none',
+                                                    userSelect: 'none',
+                                                },
+                                            })}
+                                        >
+                                            {(() => {
+                                                if (!connected) {
+                                                    return (
+                                                        <button
+                                                            onClick={openConnectModal}
+                                                            className="w-full flex items-center justify-center space-x-2 bg-gradient-to-r from-blue-600 to-purple-600 text-white px-4 py-2 rounded-lg font-medium hover:from-blue-700 hover:to-purple-700 transition-all duration-200"
+                                                        >
+                                                            <Wallet className="w-4 h-4" />
+                                                            <span>Connect Wallet</span>
+                                                        </button>
+                                                    );
+                                                }
+
+                                                if (chain.unsupported) {
+                                                    return (
+                                                        <button
+                                                            onClick={openChainModal}
+                                                            className="w-full flex items-center justify-center space-x-2 bg-red-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-red-700 transition-all duration-200"
+                                                        >
+                                                            Wrong network
+                                                        </button>
+                                                    );
+                                                }
+
+                                                return (
+                                                    <div className="flex items-center space-x-2 bg-green-50 text-green-700 px-3 py-2 rounded-lg border border-green-200 cursor-pointer"
+                                                         onClick={openAccountModal}>
+                                                        <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                                                        <span className="text-sm font-medium">{formatAddress(account.address)}</span>
+                                                        <ChevronDown className="w-4 h-4" />
+                                                    </div>
+                                                );
+                                            })()}
+                                        </div>
+                                    );
+                                }}
+                            </ConnectButton.Custom>
                         </div>
                     </div>
                 )}

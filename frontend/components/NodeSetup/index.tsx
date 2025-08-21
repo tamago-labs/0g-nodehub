@@ -6,6 +6,7 @@ import { ChevronRight, ChevronLeft, Server, Brain, Wallet, Lock, Eye, EyeOff, Al
 const NodeSetup = () => {
   const [currentStep, setCurrentStep] = useState(1);
   const [selectedNodeType, setSelectedNodeType] = useState('');
+  const [selectedVersion, setSelectedVersion] = useState('');
   const [selectedModel, setSelectedModel] = useState('');
   const [walletAddress, setWalletAddress] = useState('');
   const [privateKey, setPrivateKey] = useState('');
@@ -22,8 +23,10 @@ const NodeSetup = () => {
       id: 'inference',
       name: 'Inference Provider Node',
       description: 'Transform your AI services into verifiable, revenue-generating endpoints',
-      price: '$29/month',
-      specs: 'Up to 1000 requests/day',
+      versions: [
+        { id: 'v2.0', name: 'Version 2.0', price: '$29/month', specs: 'Up to 1000 requests/day' },
+        { id: 'v2.1', name: 'Version 2.1', price: '$39/month', specs: 'Up to 2000 requests/day • Latest features' }
+      ],
       available: true
     },
     {
@@ -78,7 +81,7 @@ const NodeSetup = () => {
   const canProceed = () => {
     switch (currentStep) {
       case 1:
-        return selectedNodeType !== '';
+        return selectedNodeType !== '' && (selectedNodeType !== 'inference' || selectedVersion !== '');
       case 2:
         return selectedModel !== '';
       case 3:
@@ -93,7 +96,7 @@ const NodeSetup = () => {
   };
 
   return (
-    <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">Create a Node</h1>
@@ -110,6 +113,7 @@ const NodeSetup = () => {
                 <span className="text-sm text-blue-800">Node Type:</span>
                 <span className="text-sm font-medium text-blue-900">
                   {nodeTypes.find(n => n.id === selectedNodeType)?.name}
+                  {selectedVersion && ` (${nodeTypes.find(n => n.id === selectedNodeType)?.versions?.find(v => v.id === selectedVersion)?.name})`}
                 </span>
               </div>
             )}
@@ -135,14 +139,13 @@ const NodeSetup = () => {
               {nodeTypes.map((nodeType) => (
                 <div key={nodeType.id} className="relative">
                   <div 
-                    className={`border rounded-lg p-4 cursor-pointer transition-all ${
+                    className={`border rounded-lg p-4 transition-all ${
                       !nodeType.available 
                         ? 'border-gray-200 bg-gray-50 cursor-not-allowed opacity-60' 
                         : selectedNodeType === nodeType.id
                           ? 'border-blue-600 bg-blue-50 ring-2 ring-blue-200'
                           : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
                     }`}
-                    onClick={() => nodeType.available && setSelectedNodeType(nodeType.id)}
                   >
                     <div className="flex justify-between items-start">
                       <div className="flex-1">
@@ -158,11 +161,57 @@ const NodeSetup = () => {
                           )}
                         </div>
                         <p className="text-gray-600 mt-1">{nodeType.description}</p>
-                        <p className="text-sm text-gray-500 mt-2">{nodeType.specs}</p>
+                        
+                        {/* Version Selection for Available Nodes */}
+                        {nodeType.available && nodeType.versions && (
+                          <div className="mt-4 space-y-2">
+                            <p className="text-sm font-medium text-gray-700">Select Version:</p>
+                            {nodeType.versions.map((version) => (
+                              <div
+                                key={version.id}
+                                className={`p-3 border rounded-md cursor-pointer transition-colors ${
+                                  selectedNodeType === nodeType.id && selectedVersion === version.id
+                                    ? 'border-blue-500 bg-blue-50'
+                                    : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                                }`}
+                                onClick={() => {
+                                  setSelectedNodeType(nodeType.id);
+                                  setSelectedVersion(version.id);
+                                }}
+                              >
+                                <div className="flex justify-between items-center">
+                                  <div>
+                                    <div className="flex items-center">
+                                      <span className="font-medium text-gray-900">{version.name}</span>
+                                      {version.id === 'v2.1' && (
+                                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
+                                          Latest
+                                        </span>
+                                      )}
+                                    </div>
+                                    <p className="text-sm text-gray-600 mt-1">{version.specs}</p>
+                                  </div>
+                                  <div className="text-right">
+                                    <p className="text-lg font-semibold text-gray-900">{version.price}</p>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Non-versioned nodes */}
+                        {!nodeType.versions && (
+                          <p className="text-sm text-gray-500 mt-2">{nodeType.specs}</p>
+                        )}
                       </div>
-                      <div className="text-right">
-                        <p className="text-lg font-semibold text-gray-900">{nodeType.price}</p>
-                      </div>
+                      
+                      {/* Price for non-versioned nodes */}
+                      {!nodeType.versions && (
+                        <div className="text-right">
+                          <p className="text-lg font-semibold text-gray-900">{nodeType.price}</p>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>

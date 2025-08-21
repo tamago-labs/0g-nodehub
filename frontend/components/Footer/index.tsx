@@ -19,7 +19,7 @@ const Footer = () => {
                                 </span>
                             </div>
                             <p className="text-gray-600 text-sm mb-4 max-w-md">
-                                Managed node infrastructure for the 0G ecosystem. Deploy and manage your AI blockchain nodes with enterprise-grade reliability.
+                            Managed node infrastructure for the 0G ecosystem. Deploy and manage your AI blockchain nodes with ease.
                             </p>
                             <div className="flex items-center text-sm text-gray-500">
                                 <span>Operated by</span>
@@ -28,7 +28,7 @@ const Footer = () => {
                         </div>
 
                         {/* Quick Links */}
-                        <div>
+                        {/* <div>
                             <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wider mb-4">
                                 Platform
                             </h3>
@@ -54,10 +54,10 @@ const Footer = () => {
                                     </a>
                                 </li>
                             </ul>
-                        </div>
+                        </div> */}
 
                         {/* Resources */}
-                        <div>
+                        {/* <div>
                             <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wider mb-4">
                                 Resources
                             </h3>
@@ -89,7 +89,7 @@ const Footer = () => {
                                     </a>
                                 </li>
                             </ul>
-                        </div>
+                        </div> */}
                     </div>
 
                     {/* Bottom Section */}
