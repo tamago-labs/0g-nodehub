@@ -1,6 +1,4 @@
-// API client configuration and service functions
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "https://kcjntn7inf.execute-api.ap-southeast-1.amazonaws.com/prod/";
-
+ 
 export interface DeploymentRequest {
   walletAddress: string;
   modelService: string;
@@ -66,15 +64,15 @@ class ApiClient {
       ...options,
     };
 
-    try {
+    try { 
       const response = await fetch(url, config);
-      
-      if (!response.ok) {
+ 
+
+      if (!response.ok) { 
         const errorText = await response.text();
         throw new Error(`HTTP ${response.status}: ${errorText}`);
       }
-
-      const data = await response.json();
+      const data = await response.json(); 
       return data;
     } catch (error) {
       console.error(`API Error (${endpoint}):`, error);
@@ -122,7 +120,7 @@ class ApiClient {
 }
 
 // Create API client instance
-const apiClient = new ApiClient(API_BASE_URL || '');
+const apiClient = new ApiClient("https://kcjntn7inf.execute-api.ap-southeast-1.amazonaws.com/prod/");
 
 // Export service functions
 export const deploymentService = {
@@ -140,7 +138,7 @@ export const deploymentService = {
   },
 
   // Get all deployments for wallet
-  async getNodes(walletAddress: string): Promise<DeploymentsListResponse> {
+  async getNodes(walletAddress: string): Promise<DeploymentsListResponse> {  
     return apiClient.getDeployments(walletAddress);
   },
 

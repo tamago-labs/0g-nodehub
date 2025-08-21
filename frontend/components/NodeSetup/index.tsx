@@ -48,27 +48,51 @@ const NodeSetup = () => {
     {
       id: 'inference',
       name: 'Inference Provider Node',
-      description: 'Transform your AI services into verifiable, revenue-generating endpoints',
+      description: 'Transform your AI services into verifiable, revenue-generating endpoints on the 0G Compute Network. This guide covers setting up your service and connecting it through the provider broker.',
       versions: [
-        { id: 'v2.0', name: 'Version 2.0', price: '$29/month', specs: 'Up to 1000 requests/day' },
-        { id: 'v2.1', name: 'Version 2.1', price: '$39/month', specs: 'Up to 2000 requests/day • Latest features' }
+        { id: 'v2.0', name: 'Version 2.0', price: 'Free', specs: 'Stable version • Basic features' },
+        { id: 'v2.1', name: 'Version 2.1', price: 'Free', specs: 'Latest version • Advanced features' }
       ],
       available: true
     },
     {
       id: 'finetuning',
       name: 'Fine-tuning Provider Node',
-      description: 'Offer computing power for fine-tuning AI models on the network',
-      price: '$49/month',
-      specs: 'GPU-optimized instances',
+      description: 'Offer computing power for fine-tuning AI models on the 0G Compute Network. This guide provides a comprehensive walkthrough for setting up and offering computing power as a fine-tuning provider.',
+      price: 'Free',
+      specs: 'GPU-optimized instances • Model training support • Distributed computing',
       available: false
     },
     {
       id: 'validator',
       name: 'Validator Node',
-      description: 'Validate transactions and secure the 0G network',
-      price: '$39/month',
-      specs: '99.9% uptime guarantee',
+      description: 'Secure the 0G network by validating transactions and maintaining consensus. Participate in network governance and earn validation rewards.',
+      price: 'Free',
+      specs: '99.9% uptime guarantee • Consensus participation • Network governance',
+      available: false
+    },
+    {
+      id: 'storage',
+      name: 'Storage Node',
+      description: 'Provide decentralized storage capacity to the 0G network. Store and serve data with high availability guarantees across the distributed network.',
+      price: 'Free',
+      specs: 'High availability storage • Data redundancy • Distributed file system',
+      available: false
+    },
+    {
+      id: 'data-availability',
+      name: 'Data Availability Node',
+      description: 'Ensure data availability across the 0G network. Maintain data integrity and accessibility for the ecosystem, providing crucial infrastructure for network reliability.',
+      price: 'Free',
+      specs: 'Data integrity verification • Network-wide availability • Redundancy management',
+      available: false
+    },
+    {
+      id: 'archival',
+      name: 'Archival Node',
+      description: 'Store complete blockchain history and provide historical data access. Essential for network transparency, auditability, and historical data queries.',
+      price: 'Free',
+      specs: 'Complete blockchain history • Historical data access • Long-term storage',
       available: false
     }
   ];
@@ -393,7 +417,7 @@ const NodeSetup = () => {
               <div className="flex items-start">
                 <AlertTriangle className="w-5 h-5 text-yellow-600 mt-0.5 mr-3" />
                 <div>
-                  <h4 className="font-medium text-yellow-800">Demo Mode</h4>
+                  
                   <p className="text-sm text-yellow-700 mt-1">
                     This is for demonstration purposes. In production, wallet keys will be securely generated and stored in AWS Secrets Manager.
                   </p>
@@ -445,13 +469,7 @@ const NodeSetup = () => {
                       <Eye className="w-4 h-4 text-gray-400" />
                     )}
                   </button>
-                </div>
-                <div className="flex items-center mt-2">
-                  <Lock className="w-3 h-3 text-gray-400 mr-1" />
-                  <p className="text-xs text-gray-500">
-                    Your private key is encrypted and stored securely
-                  </p>
-                </div>
+                </div> 
               </div>
             </div>
           </div>
