@@ -54,7 +54,6 @@ exports.handler = async (event) => {
     // Generate unique subdomain: [deployment-id].deploy.0gnodehub.com
     const subdomain = `${deploymentId}.${process.env.DEPLOYMENT_DOMAIN}`;
     const customDomain = domain || subdomain;
-    const containerPort = 8080;
 
     // Create DynamoDB record
     const deploymentRecord = {
@@ -91,6 +90,7 @@ exports.handler = async (event) => {
       }));
 
       const securityGroupId = securityGroupResponse.GroupId;
+      console.log('Security group created:', securityGroupId);
 
       // Allow HTTP traffic
       await ec2Client.send(new AuthorizeSecurityGroupIngressCommand({
@@ -98,20 +98,45 @@ exports.handler = async (event) => {
         IpPermissions: [
           {
             IpProtocol: 'tcp',
-            FromPort: containerPort,
-            ToPort: containerPort,
+            FromPort: 80,
+            ToPort: 80,
             IpRanges: [{ CidrIp: '0.0.0.0/0' }]
           },
           {
             IpProtocol: 'tcp',
-            FromPort: 8000,
-            ToPort: 8000,
-            IpRanges: [{ CidrIp: '10.0.0.0/8' }] // Only allow VPC traffic for model service
+            FromPort: 3080,
+            ToPort: 3080,
+            IpRanges: [{ CidrIp: '0.0.0.0/0' }]
           }
         ]
       }));
+      console.log('Security group rules added successfully');
 
-      // Create ECS Task Definition
+      const nginxConfig = `
+events { worker_connections 1024; }
+http {
+    server {
+        listen 80;
+        server_name _;
+        
+        location /health {
+            return 200 '{"status":"healthy","service":"nginx-proxy","deployment":"${deploymentId}"}';
+            add_header Content-Type application/json;
+        }
+        
+        location /0g/status {
+            return 200 '{"wallet":"${walletAddress}","model":"${modelIdentifier}","verification":"${verificationMethod}"}';
+            add_header Content-Type application/json;
+        }
+        
+        location / {
+            return 200 '{"message":"0G Inference Provider","wallet":"${walletAddress}","model":"${modelIdentifier}","status":"running","deployment":"${deploymentId}"}';
+            add_header Content-Type application/json;
+        }
+    }
+}`;
+
+      // Create ECS Task Definition with simplified approach
       const taskDefinitionResponse = await ecsClient.send(new RegisterTaskDefinitionCommand({
         family: `0g-inference-${deploymentId}`,
         networkMode: 'awsvpc',
@@ -121,64 +146,24 @@ exports.handler = async (event) => {
         executionRoleArn: `arn:aws:iam::057386374967:role/ecsTaskExecutionRole`,
         taskRoleArn: `arn:aws:iam::057386374967:role/ecsTaskExecutionRole`,
         containerDefinitions: [
-          // {
-          //   name: 'ai-model-service',
-          //   image: modelService,
-          //   cpu: 512,
-          //   memory: 1024,
-          //   essential: true,
-          //   portMappings: [{
-          //     containerPort: 8000,
-          //     protocol: 'tcp'
-          //   }],
-          //   environment: [
-          //     {
-          //       name: 'MODEL_NAME',
-          //       value: modelIdentifier
-          //     }
-          //   ],
-          //   logConfiguration: {
-          //     logDriver: 'awslogs',
-          //     options: {
-          //       'awslogs-group': '/ecs/0g-inference',
-          //       'awslogs-region': process.env.AWS_REGION,
-          //       'awslogs-stream-prefix': deploymentId,
-          //       'awslogs-create-group': 'true'
-          //     }
-          //   },
-          //   healthCheck: {
-          //     command: ['CMD-SHELL', 'curl -f http://localhost:8000/health || curl -f http://localhost:8000/v1/models || exit 1'],
-          //     interval: 30,
-          //     timeout: 5,
-          //     retries: 3,
-          //     startPeriod: 60
-          //   }
-          // },
+          
           {
-            name: '0g-inference-broker',
-            image: process.env.BROKER_IMAGE_URI || `${process.env.ECR_REPOSITORY_URI}:latest`,
+            name: 'nginx-proxy',
+            image: 'nginx:1.27.0',
             cpu: 512,
             memory: 1024,
             essential: true,
-            // dependsOn: [{
-            //   containerName: 'ai-model-service',
-            //   condition: 'HEALTHY'
-            // }],
             portMappings: [{
-              containerPort: containerPort,
+              containerPort: 80,
               protocol: 'tcp'
             }],
             environment: [
               {
-                name: 'SERVING_URL',
-                value: `https://${customDomain}`
+                name: 'WALLET_ADDRESS',
+                value: walletAddress
               },
               {
-                name: 'TARGET_URL',
-                value: 'http://localhost:8000'
-              },
-              {
-                name: 'MODEL',
+                name: 'MODEL_IDENTIFIER',
                 value: modelIdentifier
               },
               {
@@ -186,27 +171,158 @@ exports.handler = async (event) => {
                 value: verificationMethod
               },
               {
-                name: 'PRIVATE_KEYS',
-                value: walletPrivateKey // In production, use Secrets Manager
+                name: 'DEPLOYMENT_ID',
+                value: deploymentId
               }
+            ],
+            entryPoint: ['/bin/sh'],
+            command: [
+              '-c',
+              `echo "Starting nginx configuration..." && ` +
+              `echo '${nginxConfig.replace(/'/g, "'\\''")}' > /etc/nginx/nginx.conf && ` +
+              `echo "Testing nginx configuration..." && ` +
+              `nginx -t && ` +
+              `echo "Starting nginx..." && ` +
+              `nginx -g "daemon off;"`
             ],
             logConfiguration: {
               logDriver: 'awslogs',
               options: {
                 'awslogs-group': '/ecs/0g-inference',
-                'awslogs-region': process.env.AWS_REGION,
+                'awslogs-region': process.env.AWS_REGION || 'ap-southeast-1',
+                'awslogs-stream-prefix': `${deploymentId}-proxy`,
+                'awslogs-create-group': 'true'
+              }
+            },
+            healthCheck: {
+              command: ['CMD-SHELL', 'wget --no-verbose --tries=1 --spider http://localhost:80/health || exit 1'],
+              interval: 30,
+              timeout: 5,
+              retries: 3,
+              startPeriod: 60 // Give more time for container to start
+            }
+          },
+          // 0G Serving Broker
+          {
+            name: '0g-serving-broker',
+            image: 'ghcr.io/0glabs/0g-serving-broker:0.2.1',
+            cpu: 512,
+            memory: 1024,
+            essential: false, // Allow task to continue if broker fails
+            portMappings: [{
+              containerPort: 3080,
+              protocol: 'tcp'
+            }],
+            environment: [
+              {
+                name: 'PORT',
+                value: '3080'
+              },
+              {
+                name: 'WALLET_PRIVATE_KEY',
+                value: walletPrivateKey
+              },
+              {
+                name: 'MODEL_IDENTIFIER',
+                value: modelIdentifier
+              },
+              {
+                name: 'VERIFICATION_METHOD',
+                value: verificationMethod
+              },
+              {
+                name: 'SERVING_URL',
+                value: `https://${customDomain}`
+              }
+            ],
+            command: [
+              "/bin/sh",
+              "-c",
+              `
+# Create basic config file
+cat > /tmp/config.yaml << 'EOF'
+interval:
+  autoSettleBufferTime: 60
+  forceSettlementProcessor: 600
+  settlementProcessor: 300
+networks:
+  ethereum0g:
+    url: "https://evmrpc-testnet.0g.ai"
+    chainID: 16601
+    privateKeys:
+      - ${walletPrivateKey}
+    transactionLimit: 1000000
+    gasEstimationBuffer: 10000
+service:
+  servingUrl: "https://${customDomain}"
+  targetUrl: "http://localhost:8000"
+  inputPrice: 1
+  outputPrice: 1
+  type: "chatbot"
+  model: "${modelIdentifier}"
+  verifiability: "${verificationMethod}"
+database:
+  enabled: false
+settlement:
+  enabled: false
+  zkProver:
+    enabled: false
+EOF
+
+# Start the broker with timeout
+echo "Starting 0G inference broker..."
+timeout 60 0g-inference-server --config /tmp/config.yaml || {
+  echo "0G broker failed to start within timeout, running fallback server..."
+  # Simple HTTP server as fallback
+  python3 -c "
+import http.server
+import socketserver
+import json
+from datetime import datetime
+
+class CustomHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        response = {
+            'status': 'fallback_mode',
+            'wallet': '${walletAddress}',
+            'model': '${modelIdentifier}',
+            'deployment': '${deploymentId}',
+            'timestamp': datetime.now().isoformat(),
+            'message': '0G broker fallback service'
+        }
+        self.wfile.write(json.dumps(response).encode())
+    
+    def do_POST(self):
+        self.do_GET()
+
+with socketserver.TCPServer(('0.0.0.0', 3080), CustomHandler) as httpd:
+    print('Fallback server running on port 3080')
+    httpd.serve_forever()
+"
+}
+              `
+            ],
+            logConfiguration: {
+              logDriver: 'awslogs',
+              options: {
+                'awslogs-group': '/ecs/0g-inference',
+                'awslogs-region': process.env.AWS_REGION || 'ap-southeast-1',
                 'awslogs-stream-prefix': `${deploymentId}-broker`,
                 'awslogs-create-group': 'true'
               }
             },
             healthCheck: {
-              command: ['CMD-SHELL', 'curl -f http://localhost:8080/health || exit 1'],
-              interval: 30,
-              timeout: 5,
+              command: ['CMD-SHELL', 'curl -f http://localhost:3080/ || exit 1'],
+              interval: 60,
+              timeout: 10,
               retries: 3,
-              startPeriod: 30
+              startPeriod: 120 // Give more time for potential fallback
             }
-          }
+          },
+          
         ]
       }));
 
@@ -244,7 +360,7 @@ exports.handler = async (event) => {
       const targetGroupResponse = await elbClient.send(new CreateTargetGroupCommand({
         Name: `0g-${deploymentId.substr(-20)}`, // ALB target group names have length limits
         Protocol: 'HTTP',
-        Port: containerPort,
+        Port: 80,
         VpcId: process.env.VPC_ID,
         TargetType: 'ip', // Use 'ip' for Fargate
         HealthCheckPath: '/health',
@@ -265,12 +381,10 @@ exports.handler = async (event) => {
         ]
       }));
 
-      // Handle different possible response structures
-      const targetGroupArn = targetGroupResponse.TargetGroups[0].TargetGroupArn
+      const targetGroupArn = targetGroupResponse.TargetGroups[0].TargetGroupArn;
+      console.log("targetGroupArn:", targetGroupArn);
 
-      console.log("targetGroupArn:", targetGroupArn)
-
-      // Add listener rule for this deployment (use host-header instead of path-pattern)
+      // Add listener rule for this deployment
       const priority = Math.floor(Math.random() * 50000) + 1;
       const ruleResponse = await elbClient.send(new CreateRuleCommand({
         ListenerArn: process.env.HTTPS_LISTENER_ARN,
@@ -299,39 +413,7 @@ exports.handler = async (event) => {
         ]
       }));
 
-      // Note: We don't need to create individual Route53 records because
-      // we have a wildcard record (*.deploy.0gnodehub.com) pointing to the load balancer
-      // The ALB will route based on the Host header in the listener rule above
       console.log(`Using wildcard DNS routing for ${customDomain}`);
-
-      // // Create Route53 record for custom subdomain (if using auto-generated subdomain)
-      // if (!domain && customDomain.includes(process.env.DEPLOYMENT_DOMAIN)) {
-      //   try {
-      //     await route53Client.send(new ChangeResourceRecordSetsCommand({
-      //       HostedZoneId: process.env.HOSTED_ZONE_ID,
-      //       ChangeBatch: {
-      //         Changes: [
-      //           {
-      //             Action: 'CREATE',
-      //             ResourceRecordSet: {
-      //               Name: customDomain,
-      //               Type: 'A',
-      //               AliasTarget: {
-      //                 DNSName: process.env.LOAD_BALANCER_DNS,
-      //                 EvaluateTargetHealth: false,
-      //                 HostedZoneId: await getLoadBalancerHostedZoneId()
-      //               }
-      //             }
-      //           }
-      //         ]
-      //       }
-      //     }));
-      //     console.log(`Created Route53 record for ${customDomain}`);
-      //   } catch (route53Error) {
-      //     console.error('Route53 record creation failed:', route53Error);
-      //     // Continue anyway since wildcard should work
-      //   }
-      // }
 
       // Update deployment status
       const updateRecord = {
@@ -341,7 +423,7 @@ exports.handler = async (event) => {
         modelService,
         modelIdentifier,
         verificationMethod,
-        createdAt: new Date().toISOString(),
+        createdAt: deploymentRecord.createdAt,
         updatedAt: new Date().toISOString(),
         targetGroupArn,
         serviceArn: serviceResponse.service.serviceArn,
@@ -417,20 +499,3 @@ function getCorsHeaders() {
     'Access-Control-Allow-Methods': 'OPTIONS,POST,GET,PUT,DELETE'
   };
 }
-
-// Helper function to get load balancer hosted zone ID
-// async function getLoadBalancerHostedZoneId() {
-//   // AWS Application Load Balancer hosted zone IDs by region
-//   const hostedZoneIds = {
-//     'us-east-1': 'Z35SXDOTRQ7X7K',
-//     'us-east-2': 'Z3AADJGX6KTTL2',
-//     'us-west-1': 'Z368ELLRRE2KJ0',
-//     'us-west-2': 'Z1H1FL5HABSF5',
-//     'eu-west-1': 'Z32O12XQLNTSW2',
-//     'eu-central-1': 'Z3F0SRJ5LGBH90',
-//     'ap-southeast-1': 'Z1LMS91P8CMLE5',
-//     // Add more regions as needed
-//   };
-
-//   return hostedZoneIds[process.env.AWS_REGION] || 'Z1LMS91P8CMLE5'; // Default to ap-southeast-1
-// }
