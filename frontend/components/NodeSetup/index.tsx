@@ -1,16 +1,42 @@
 "use client"
 
-import React, { useState } from 'react';
-import { ChevronRight, ChevronLeft, Server, Brain, Wallet, Lock, Eye, EyeOff, AlertTriangle, CheckCircle, Clock, XCircle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { ChevronRight, ChevronLeft, Server, Brain, Wallet, Lock, Eye, EyeOff, AlertTriangle, CheckCircle, Clock, XCircle, Loader2 } from 'lucide-react';
+import { useAccount } from 'wagmi';
+import { deploymentService } from '@/lib/api';
+import { useToast } from '@/contexts/ToastContext';
+import { useAsync } from '@/lib/hooks';
+import { validatePrivateKey } from '@/lib/utils';
+import { config } from '@/lib/config';
+import { useRouter } from 'next/navigation';
 
 const NodeSetup = () => {
+  const { address, isConnected } = useAccount();
+  const toast = useToast();
+  const router = useRouter();
   const [currentStep, setCurrentStep] = useState(1);
-  const [selectedNodeType, setSelectedNodeType] = useState('');
-  const [selectedVersion, setSelectedVersion] = useState('');
-  const [selectedModel, setSelectedModel] = useState('');
+  const [selectedNodeType, setSelectedNodeType] = useState('inference');
+  const [selectedVersion, setSelectedVersion] = useState('v2.1');
+  const [selectedModel, setSelectedModel] = useState('llama-3.3-70b');
   const [walletAddress, setWalletAddress] = useState('');
   const [privateKey, setPrivateKey] = useState('');
   const [showPrivateKey, setShowPrivateKey] = useState(false);
+  const [validationErrors, setValidationErrors] = useState<{[key: string]: string}>({});
+
+  // Auto-populate wallet address when connected
+  useEffect(() => {
+    if (isConnected && address) {
+      setWalletAddress(address);
+    }
+  }, [isConnected, address]);
+
+  // Deployment API call
+  const { 
+    data: deploymentResult, 
+    loading: deploying, 
+    error: deploymentError, 
+    execute: createDeployment 
+  } = useAsync(deploymentService.createNode);
 
   const steps = [
     { id: 1, title: 'Choose Node Type', icon: Server },
@@ -66,8 +92,42 @@ const NodeSetup = () => {
     }
   ];
 
+  const validateStep = (step: number): boolean => {
+    const errors: {[key: string]: string} = {};
+    
+    switch (step) {
+      case 1:
+        if (!selectedNodeType) {
+          errors.nodeType = 'Please select a node type';
+        }
+        if (selectedNodeType === 'inference' && !selectedVersion) {
+          errors.version = 'Please select a version';
+        }
+        break;
+      case 2:
+        if (!selectedModel) {
+          errors.model = 'Please select an AI model';
+        }
+        break;
+      case 3:
+        if (!walletAddress) {
+          errors.walletAddress = 'Wallet address is required';
+        }
+        if (!privateKey) {
+          errors.privateKey = 'Private key is required';
+        } 
+        // else if (!validatePrivateKey(privateKey)) {
+        //   errors.privateKey = 'Invalid private key format';
+        // }
+        break;
+    }
+    
+    setValidationErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
   const handleNext = () => {
-    if (currentStep < 3) {
+    if (validateStep(currentStep) && currentStep < 3) {
       setCurrentStep(currentStep + 1);
     }
   };
@@ -75,6 +135,7 @@ const NodeSetup = () => {
   const handlePrevious = () => {
     if (currentStep > 1) {
       setCurrentStep(currentStep - 1);
+      setValidationErrors({});
     }
   };
 
@@ -85,15 +146,75 @@ const NodeSetup = () => {
       case 2:
         return selectedModel !== '';
       case 3:
-        return walletAddress !== '' && privateKey !== '';
+        // return walletAddress !== '' && privateKey !== '' && validatePrivateKey(privateKey);
+        return walletAddress !== '' && privateKey !== ''
       default:
         return false;
     }
   };
 
-  const handleDeploy = () => {
-    alert('Node deployment initiated! (Demo functionality)');
+  const handleDeploy = async () => {
+    if (!validateStep(3)) {
+      return;
+    }
+
+    if (!isConnected) {
+      toast.error('Please connect your wallet first');
+      return;
+    }
+
+    try {
+      await createDeployment(walletAddress, privateKey);
+    } catch (error) {
+      console.error('Deployment failed:', error);
+      // Error handling is done in useEffect
+    }
   };
+
+  // Show success message when deployment completes
+  useEffect(() => {
+    if (deploymentResult && !deploying) {
+      toast.success(
+        `Deployment ${deploymentResult.deploymentId} created successfully!`
+      );
+      
+      // Navigate to dashboard after successful deployment
+      setTimeout(() => {
+        router.push('/');
+      }, 2000);
+    }
+  }, [deploymentResult, deploying, router]); // Added router to deps
+
+  // Show error message when deployment fails
+  useEffect(() => {
+    if (deploymentError) {
+      toast.error(`Deployment failed: ${deploymentError}`);
+    }
+  }, [deploymentError]); // Removed toast from deps
+
+  // Wallet connection warning
+  if (!isConnected) {
+    return (
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="text-center">
+          <div className="mb-8">
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">Create a Node</h1>
+            <p className="text-gray-600">Deploy and manage your 0G network node in minutes</p>
+          </div>
+          
+          <div className="bg-yellow-50 rounded-lg border border-yellow-200 p-8 max-w-md mx-auto">
+            <div className="flex items-center justify-center mb-4">
+              <AlertTriangle className="w-12 h-12 text-yellow-600" />
+            </div>
+            <h3 className="text-lg font-semibold text-yellow-800 mb-2">Wallet Connection Required</h3>
+            <p className="text-yellow-700 mb-4">
+              Please connect your wallet to the 0G Galileo testnet to continue with node setup.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -355,9 +476,9 @@ const NodeSetup = () => {
         {currentStep < 3 ? (
           <button
             onClick={handleNext}
-            disabled={!canProceed()}
+            disabled={!canProceed() || deploying}
             className={`flex items-center px-6 py-2 rounded-md font-medium ${
-              canProceed()
+              canProceed() && !deploying
                 ? 'bg-blue-600 text-white hover:bg-blue-700'
                 : 'bg-gray-300 text-gray-500 cursor-not-allowed'
             }`}
@@ -368,15 +489,24 @@ const NodeSetup = () => {
         ) : (
           <button
             onClick={handleDeploy}
-            disabled={!canProceed()}
+            disabled={!canProceed() || deploying}
             className={`flex items-center px-6 py-2 rounded-md font-medium ${
-              canProceed()
+              canProceed() && !deploying
                 ? 'bg-green-600 text-white hover:bg-green-700'
                 : 'bg-gray-300 text-gray-500 cursor-not-allowed'
             }`}
           >
-            <Server className="w-4 h-4 mr-2" />
-            Deploy Node
+            {deploying ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Deploying...
+              </>
+            ) : (
+              <>
+                <Server className="w-4 h-4 mr-2" />
+                Deploy Node
+              </>
+            )}
           </button>
         )}
       </div>

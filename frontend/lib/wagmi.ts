@@ -20,7 +20,7 @@ export const galileoTestnet = defineChain({
 
 export const config = getDefaultConfig({
   appName: '0G NodeHub',
-  projectId: process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID || 'demo',
+  projectId: "de3bc071691717927507e2c91cdb1572",
   chains: [galileoTestnet],
   ssr: true,
 });
