@@ -53,7 +53,12 @@ exports.handler = async (event) => {
       TargetType: 'ip',
       HealthCheckProtocol: 'HTTP',
       HealthCheckPort: '3000',
-      HealthCheckPath: '/health'
+      HealthCheckPath: '/health',
+      HealthCheckIntervalSeconds: 15,        // Check every 15 seconds
+      HealthCheckTimeoutSeconds: 10,         // 10 second timeout
+      HealthyThresholdCount: 2,              // 2 successful checks = healthy
+      UnhealthyThresholdCount: 3,            // 3 failed checks = unhealthy
+      Matcher: { HttpCode: '200' }           // Expect HTTP 200 response
     }));
 
     const targetGroupArn = tgResp.TargetGroups[0].TargetGroupArn;

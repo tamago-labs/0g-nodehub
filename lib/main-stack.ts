@@ -80,12 +80,40 @@ export class MainStack extends cdk.Stack {
         });
 
         // ==========================
+        // SECURITY GROUPS
+        // ==========================
+        
+        // ALB Security Group 
+        const albSecurityGroup = new ec2.SecurityGroup(this, 'ALBSecurityGroup', {
+            vpc,
+            description: 'Security group for NodeHub ALB',
+            allowAllOutbound: true,
+        });
+
+        // Allow inbound HTTPS/HTTP to ALB
+        albSecurityGroup.addIngressRule(
+            ec2.Peer.anyIpv4(),
+            ec2.Port.tcp(443),
+            'Allow HTTPS inbound to ALB'
+        );
+
+        albSecurityGroup.addIngressRule(
+            ec2.Peer.anyIpv4(),
+            ec2.Port.tcp(80),
+            'Allow HTTP inbound to ALB'
+        );
+
+        // ==========================
         // ALB
         // ==========================
         this.alb = new elbv2.ApplicationLoadBalancer(this, 'ALB', {
             vpc,
             internetFacing: true,
             loadBalancerName: 'nodehub-alb',
+            securityGroup: albSecurityGroup,
+            vpcSubnets: {
+                subnetType: ec2.SubnetType.PUBLIC
+            }
         });
 
         const httpsListener = this.alb.addListener('HTTPSListener', {
@@ -194,6 +222,12 @@ export class MainStack extends cdk.Stack {
             ec2.Port.tcp(3000),
             'Allow HTTP traffic to containers'
         );
+ 
+        containerSecurityGroup.addIngressRule(
+            albSecurityGroup,
+            ec2.Port.tcp(3000),
+            'Allow ALB to reach containers'
+        );
 
         // Add explicit outbound rules for ECR and CloudWatch access
         containerSecurityGroup.addEgressRule(
@@ -226,7 +260,8 @@ export class MainStack extends cdk.Stack {
                 ECS_EXECUTION_ROLE_ARN: ecsExecutionRole.roleArn,
                 ALB_ARN: this.alb.loadBalancerArn,
                 ALB_LISTENER_ARN: httpsListener.listenerArn,
-                CONTAINER_SECURITY_GROUP_ID: containerSecurityGroup.securityGroupId
+                CONTAINER_SECURITY_GROUP_ID: containerSecurityGroup.securityGroupId,
+                ALB_SECURITY_GROUP_ID: albSecurityGroup.securityGroupId
             },
         });
 
