@@ -17,6 +17,7 @@ import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import * as servicediscovery from 'aws-cdk-lib/aws-servicediscovery';
 import { Construct } from 'constructs';
+import { ZKServices } from './constructs/zk-services';
 
 export class MainStack extends cdk.Stack {
     public readonly bucket: s3.Bucket;
@@ -29,6 +30,7 @@ export class MainStack extends cdk.Stack {
     public readonly alb: elbv2.ApplicationLoadBalancer;
     public readonly rdsInstance: rds.DatabaseInstance;
     public readonly namespace: servicediscovery.PrivateDnsNamespace;
+    public readonly zkServices: ZKServices;
 
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
         super(scope, id, props);
@@ -247,10 +249,6 @@ export class MainStack extends cdk.Stack {
             backupRetention: cdk.Duration.days(1),
         });
 
-        // ========================================
-        // LAMBDA FUNCTIONS
-        // ========================================
-
         // CloudWatch Log Group for Lambda functions
         const lambdaLogGroup = new logs.LogGroup(this, 'LambdaLogGroup', {
             logGroupName: '/aws/lambda/nodehub',
@@ -264,6 +262,24 @@ export class MainStack extends cdk.Stack {
             retention: logs.RetentionDays.ONE_WEEK,
             removalPolicy: cdk.RemovalPolicy.DESTROY,
         });
+
+        // ========================================
+        // SHARED ZK SERVICES
+        // ========================================
+
+        this.zkServices = new ZKServices(this, 'ZKServices', {
+            cluster: this.cluster,
+            vpc,
+            containerSecurityGroup,
+            namespace: this.namespace,
+            ecsLogGroup
+        });
+
+        // ========================================
+        // LAMBDA FUNCTIONS
+        // ========================================
+
+        
 
         // ECS Task Execution Role
         const ecsExecutionRole = new iam.Role(this, 'ECSExecutionRole', {
@@ -298,8 +314,6 @@ export class MainStack extends cdk.Stack {
         // Grant CloudWatch logs permissions to ECS execution role
         ecsLogGroup.grantWrite(ecsExecutionRole);
 
-
-
         // Deployment Lambda Function
         const deploymentFunction = new lambda.Function(this, 'DeploymentFunction', {
             runtime: lambda.Runtime.NODEJS_18_X,
@@ -325,7 +339,9 @@ export class MainStack extends cdk.Stack {
                 MYSQL_DATABASE: 'provider_db',
                 MYSQL_USER: 'provider',
                 MYSQL_PASSWORD: 'provider',
-                SERVICE_DISCOVERY_NAMESPACE: this.namespace.namespaceName
+                SERVICE_DISCOVERY_NAMESPACE: this.namespace.namespaceName,
+                ZK_PROVER_URL: 'http://zk-prover.nodehub.local:3001',
+                ZK_SETTLEMENT_URL: 'http://zk-settlement.nodehub.local:3002'
             },
         });
 
