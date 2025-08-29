@@ -15,6 +15,7 @@ import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import * as rds from 'aws-cdk-lib/aws-rds';
+import * as servicediscovery from 'aws-cdk-lib/aws-servicediscovery';
 import { Construct } from 'constructs';
 
 export class MainStack extends cdk.Stack {
@@ -27,6 +28,7 @@ export class MainStack extends cdk.Stack {
     public readonly deploymentsTable: dynamodb.Table;
     public readonly alb: elbv2.ApplicationLoadBalancer;
     public readonly rdsInstance: rds.DatabaseInstance;
+    public readonly namespace: servicediscovery.PrivateDnsNamespace;
 
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
         super(scope, id, props);
@@ -45,6 +47,7 @@ export class MainStack extends cdk.Stack {
             domainName: zoneName,
         });
 
+       
         // Import the manually created certificate
         this.certificateApp = acm.Certificate.fromCertificateArn(
             this,
@@ -84,6 +87,16 @@ export class MainStack extends cdk.Stack {
             vpc,
             clusterName: '0g-inference-providers',
             containerInsights: true,
+        });
+
+        // ========================================
+        // SERVICE DISCOVERY
+        // ========================================
+
+        this.namespace = new servicediscovery.PrivateDnsNamespace(this, 'NodeHubNamespace', {
+            vpc,
+            name: 'nodehub.local',
+            description: 'Service discovery namespace for NodeHub services'
         });
 
         // ==========================
@@ -221,7 +234,7 @@ export class MainStack extends cdk.Stack {
                 version: rds.MysqlEngineVersion.VER_8_0
             }),
             instanceType: ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.MICRO),
-            credentials: rds.Credentials.fromPassword('root', cdk.SecretValue.unsafePlainText('123456')),
+            credentials: rds.Credentials.fromPassword('root', cdk.SecretValue.unsafePlainText('12345678')),
             vpc,
             vpcSubnets: {
                 subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS
@@ -311,7 +324,8 @@ export class MainStack extends cdk.Stack {
                 MYSQL_PORT: this.rdsInstance.instanceEndpoint.port.toString(),
                 MYSQL_DATABASE: 'provider_db',
                 MYSQL_USER: 'provider',
-                MYSQL_PASSWORD: 'provider'
+                MYSQL_PASSWORD: 'provider',
+                SERVICE_DISCOVERY_NAMESPACE: this.namespace.namespaceName
             },
         });
 
@@ -586,6 +600,11 @@ export class MainStack extends cdk.Stack {
         new cdk.CfnOutput(this, 'MySQLEndpoint', {
             value: this.rdsInstance.instanceEndpoint.hostname,
             description: 'Shared MySQL RDS endpoint'
+        });
+
+        new cdk.CfnOutput(this, 'ServiceDiscoveryNamespace', {
+            value: this.namespace.namespaceName,
+            description: 'Service discovery namespace'
         });
     }
 
