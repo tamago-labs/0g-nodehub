@@ -14,25 +14,25 @@ const logsClient = new CloudWatchLogsClient({});
 
 exports.handler = async (event) => {
   console.log('Management request:', JSON.stringify(event, null, 2));
-  
+
   try {
     const { httpMethod, pathParameters, queryStringParameters } = event;
-    
+
     if (httpMethod === 'GET' && pathParameters.walletAddress && !pathParameters.deploymentId) {
       // Get all deployments for a wallet
       return await getWalletDeployments(pathParameters.walletAddress, queryStringParameters);
     }
-    
+
     if (httpMethod === 'GET' && pathParameters.deploymentId) {
       // Get specific deployment
       return await getDeployment(pathParameters.walletAddress, pathParameters.deploymentId, queryStringParameters);
     }
-    
+
     if (httpMethod === 'DELETE' && pathParameters.deploymentId) {
       // Delete deployment
       return await deleteDeployment(pathParameters.walletAddress, pathParameters.deploymentId);
     }
-    
+
     return {
       statusCode: 405,
       headers: getCorsHeaders(),
@@ -100,27 +100,8 @@ async function getDeployment(walletAddress, deploymentId, queryParams) {
       };
     }
 
-    const deployment = unmarshall(result.Item);
-
-    // Get logs if requested
-    if (queryParams && queryParams.logs === 'true') {
-      try {
-        const logEvents = await logsClient.send(new FilterLogEventsCommand({
-          logGroupName: '/ecs/nodehub',
-          logStreamNamePrefix: deploymentId,
-          limit: 100,
-          startTime: Date.now() - (24 * 60 * 60 * 1000) // Last 24 hours
-        }));
-
-        deployment.logs = logEvents.events ? logEvents.events.map(event => ({
-          timestamp: new Date(event.timestamp).toISOString(),
-          message: event.message
-        })) : [];
-      } catch (logError) {
-        console.error('Error fetching logs:', logError);
-        deployment.logs = [];
-      }
-    }
+    let deployment = unmarshall(result.Item);
+    let dbNeedsUpdate = false;
 
     // Get service status if available
     if (deployment.serviceArn) {
@@ -132,6 +113,20 @@ async function getDeployment(walletAddress, deploymentId, queryParams) {
 
         if (services.services && services.services.length > 0) {
           const service = services.services[0];
+          const actualStatus = service.status === "ACTIVE" && service.runningCount > 0
+            ? "DEPLOYED"
+            : service.status === "DRAINING"
+              ? "DELETING"
+              : "DEPLOYING";
+
+          // Compare with DB
+          if (deployment.status !== actualStatus) {
+            deployment.status = actualStatus;
+            deployment.updatedAt = new Date().toISOString();
+            dbNeedsUpdate = true;
+          }
+
+          // Keep live counts in response (not necessarily stored)
           deployment.serviceStatus = {
             runningCount: service.runningCount,
             pendingCount: service.pendingCount,
@@ -142,6 +137,34 @@ async function getDeployment(walletAddress, deploymentId, queryParams) {
         }
       } catch (serviceError) {
         console.error('Error fetching service status:', serviceError);
+      }
+    }
+
+    // Update DynamoDB only if status changed
+    if (dbNeedsUpdate) {
+      await dynamoClient.send(new PutItemCommand({
+        TableName: process.env.DEPLOYMENTS_TABLE,
+        Item: marshall(deployment)
+      }));
+    }
+
+    // Attach logs if requested
+    if (queryParams && queryParams.logs === 'true') {
+      try {
+        const logEvents = await logsClient.send(new FilterLogEventsCommand({
+          logGroupName: '/ecs/nodehub',
+          logStreamNamePrefix: deploymentId,
+          limit: 100,
+          startTime: Date.now() - (24 * 60 * 60 * 1000)
+        }));
+
+        deployment.logs = logEvents.events?.map(event => ({
+          timestamp: new Date(event.timestamp).toISOString(),
+          message: event.message
+        })) || [];
+      } catch (logError) {
+        console.error('Error fetching logs:', logError);
+        deployment.logs = [];
       }
     }
 
@@ -156,6 +179,7 @@ async function getDeployment(walletAddress, deploymentId, queryParams) {
     throw error;
   }
 }
+
 
 async function deleteDeployment(walletAddress, deploymentId) {
   try {
@@ -178,7 +202,7 @@ async function deleteDeployment(walletAddress, deploymentId) {
     // Update status to DELETING
     deployment.status = 'DELETING';
     deployment.updatedAt = new Date().toISOString();
-    
+
     await dynamoClient.send(new PutItemCommand({
       TableName: process.env.DEPLOYMENTS_TABLE,
       Item: marshall(deployment)
@@ -249,7 +273,7 @@ async function deleteDeployment(walletAddress, deploymentId) {
     return {
       statusCode: 200,
       headers: getCorsHeaders(),
-      body: JSON.stringify({ 
+      body: JSON.stringify({
         success: true,
         message: 'Deployment deleted successfully'
       })
@@ -257,7 +281,7 @@ async function deleteDeployment(walletAddress, deploymentId) {
 
   } catch (error) {
     console.error('Error deleting deployment:', error);
-    
+
     // Update status to DELETE_FAILED if deletion fails
     try {
       await dynamoClient.send(new PutItemCommand({

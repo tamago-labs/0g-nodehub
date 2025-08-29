@@ -1,7 +1,6 @@
 import * as cdk from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
-import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
@@ -22,9 +21,10 @@ export class MainStack extends cdk.Stack {
     public readonly distribution: cloudfront.Distribution;
     public readonly api: apigateway.RestApi;
     public readonly cluster: ecs.Cluster;
-    public readonly loadBalancer: elbv2.ApplicationLoadBalancer;
     public readonly hostedZone: route53.IHostedZone;
-    public readonly certificate: acm.ICertificate;
+    public readonly certificateApp: acm.ICertificate;
+    public readonly deploymentsTable: dynamodb.Table;
+    public readonly alb: elbv2.ApplicationLoadBalancer;
 
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
         super(scope, id, props);
@@ -35,8 +35,7 @@ export class MainStack extends cdk.Stack {
 
         const zoneName = '0gnodehub.com'; // The root domain
         const domainName = 'app.0gnodehub.com';
-        const deploymentDomain = 'deploy.0gnodehub.com'; // Base domain for deployments
-        const certificateArn = 'arn:aws:acm:us-east-1:057386374967:certificate/8bdf3cbf-c1bd-474c-a2f3-9e200e4f2d26';
+        const deploymentDomain = 'deploy.0gnodehub.com'; // Base domain for deployments 
         const brokerImageUri = '057386374967.dkr.ecr.ap-southeast-1.amazonaws.com/0g-inference-broker:latest'; // V.2.1
 
         // Look up the existing hosted zone
@@ -45,15 +44,15 @@ export class MainStack extends cdk.Stack {
         });
 
         // Import the manually created certificate
-        this.certificate = acm.Certificate.fromCertificateArn(
+        this.certificateApp = acm.Certificate.fromCertificateArn(
             this,
-            'Certificate',
-            certificateArn
+            'CertificateApp',
+            "arn:aws:acm:us-east-1:057386374967:certificate/8bdf3cbf-c1bd-474c-a2f3-9e200e4f2d26"
         );
 
-        const certificate2 = acm.Certificate.fromCertificateArn(
+        const certificateDeployment = acm.Certificate.fromCertificateArn(
             this,
-            'Certificate2',
+            'CertificateDeployment',
             "arn:aws:acm:ap-southeast-1:057386374967:certificate/2cc7f434-5214-467d-b9d2-bec3bbf25103"
         );
 
@@ -80,36 +79,23 @@ export class MainStack extends cdk.Stack {
             containerInsights: true,
         });
 
-        // Add Fargate capacity
-        this.cluster.addCapacity('DefaultAutoScalingGroup', {
-            instanceType: ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.MEDIUM),
-            desiredCapacity: 1,
-            maxCapacity: 2,
-            minCapacity: 1,
-        });
-
-        // Application Load Balancer
-        this.loadBalancer = new elbv2.ApplicationLoadBalancer(this, 'ALB', {
+        // ==========================
+        // ALB
+        // ==========================
+        this.alb = new elbv2.ApplicationLoadBalancer(this, 'ALB', {
             vpc,
             internetFacing: true,
             loadBalancerName: 'nodehub-alb',
         });
 
-        // HTTPS listener with SSL certificate
-        const httpsListener = this.loadBalancer.addListener('HTTPSListener', {
+        const httpsListener = this.alb.addListener('HTTPSListener', {
             port: 443,
-            certificates: [certificate2],
-            defaultAction: elbv2.ListenerAction.fixedResponse(404, {
-                contentType: 'application/json',
-                messageBody: JSON.stringify({
-                    error: 'Service not found',
-                    message: 'No deployment found for this subdomain'
-                }),
-            }),
+            certificates: [certificateDeployment],
+            defaultAction: elbv2.ListenerAction.fixedResponse(404, { contentType: 'application/json', messageBody: JSON.stringify({ error: 'Service not found' }) }),
         });
 
         // HTTP listener that redirects to HTTPS
-        this.loadBalancer.addListener('HTTPListener', {
+        this.alb.addListener('HTTPListener', {
             port: 80,
             defaultAction: elbv2.ListenerAction.redirect({
                 protocol: 'HTTPS',
@@ -118,25 +104,11 @@ export class MainStack extends cdk.Stack {
             }),
         });
 
-
-        // Create wildcard A record for *.deploy.0gnodehub.com -> Load Balancer
+        // Wildcard subdomain record (*.deploy.0gnodehub.com -> ALB)
         new route53.ARecord(this, 'DeploymentWildcardRecord', {
             zone: this.hostedZone,
-            recordName: '*.deploy', // This creates *.deploy.0gnodehub.com
-            target: route53.RecordTarget.fromAlias(
-                new targets.LoadBalancerTarget(this.loadBalancer)
-            ),
-        });
-
-        // ========================================
-        // CONTAINER REGISTRY - ECR
-        // ========================================
-
-
-        const ecrRepository = new ecr.Repository(this, 'InferenceRegistry', {
-            repositoryName: '0g-inference-broker',
-            removalPolicy: cdk.RemovalPolicy.DESTROY,
-            imageTagMutability: ecr.TagMutability.MUTABLE,
+            recordName: '*.deploy',
+            target: route53.RecordTarget.fromAlias(new targets.LoadBalancerTarget(this.alb)),
         });
 
         // ========================================
@@ -169,6 +141,73 @@ export class MainStack extends cdk.Stack {
             removalPolicy: cdk.RemovalPolicy.DESTROY,
         });
 
+        // CloudWatch Log Group for ECS tasks
+        const ecsLogGroup = new logs.LogGroup(this, 'ECSLogGroup', {
+            logGroupName: '/ecs/nodehub',
+            retention: logs.RetentionDays.ONE_WEEK,
+            removalPolicy: cdk.RemovalPolicy.DESTROY,
+        });
+ 
+        // ECS Task Execution Role
+        const ecsExecutionRole = new iam.Role(this, 'ECSExecutionRole', {
+            assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
+            managedPolicies: [
+                iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonECSTaskExecutionRolePolicy')
+            ],
+        });
+
+        // Add explicit ECR permissions to ensure private registry access
+        ecsExecutionRole.addToPolicy(new iam.PolicyStatement({
+            effect: iam.Effect.ALLOW,
+            actions: [
+                'ecr:GetAuthorizationToken',
+                'ecr:BatchCheckLayerAvailability',
+                'ecr:GetDownloadUrlForLayer',
+                'ecr:BatchGetImage'
+            ],
+            resources: [
+                `arn:aws:ecr:ap-southeast-1:057386374967:repository/nodehub-simple`,
+                `arn:aws:ecr:ap-southeast-1:057386374967:repository/0g-inference-broker`
+            ]
+        }));
+
+        // Allow getting ECR authorization token  
+        ecsExecutionRole.addToPolicy(new iam.PolicyStatement({
+            effect: iam.Effect.ALLOW,
+            actions: ['ecr:GetAuthorizationToken'],
+            resources: ['*']
+        }));
+
+        // Grant CloudWatch logs permissions to ECS execution role
+        ecsLogGroup.grantWrite(ecsExecutionRole);
+ 
+        // Security Group for containers
+        const containerSecurityGroup = new ec2.SecurityGroup(this, 'ContainerSecurityGroup', {
+            vpc,
+            description: 'Security group for NodeHub containers',
+            allowAllOutbound: true,
+        });
+
+        // Allow HTTP traffic from anywhere
+        containerSecurityGroup.addIngressRule(
+            ec2.Peer.anyIpv4(),
+            ec2.Port.tcp(3000),
+            'Allow HTTP traffic to containers'
+        );
+
+        // Add explicit outbound rules for ECR and CloudWatch access
+        containerSecurityGroup.addEgressRule(
+            ec2.Peer.anyIpv4(),
+            ec2.Port.tcp(443),
+            'Allow HTTPS outbound for ECR/CloudWatch'
+        );
+
+        containerSecurityGroup.addEgressRule(
+            ec2.Peer.anyIpv4(),
+            ec2.Port.tcp(80),
+            'Allow HTTP outbound'
+        );
+
         // Deployment Lambda Function
         const deploymentFunction = new lambda.Function(this, 'DeploymentFunction', {
             runtime: lambda.Runtime.NODEJS_18_X,
@@ -181,15 +220,13 @@ export class MainStack extends cdk.Stack {
                 CLUSTER_NAME: this.cluster.clusterName,
                 DEPLOYMENTS_TABLE: deploymentsTable.tableName,
                 VPC_ID: vpc.vpcId,
-                ALB_ARN: this.loadBalancer.loadBalancerArn,
-                HTTPS_LISTENER_ARN: httpsListener.listenerArn,
-                ECR_REPOSITORY_URI: ecrRepository.repositoryUri,
                 BROKER_IMAGE_URI: brokerImageUri,
                 SUBNETS: vpc.publicSubnets.map(subnet => subnet.subnetId).join(','),
                 DOMAIN_NAME: zoneName,
-                DEPLOYMENT_DOMAIN: deploymentDomain,
-                HOSTED_ZONE_ID: this.hostedZone.hostedZoneId,
-                LOAD_BALANCER_DNS: this.loadBalancer.loadBalancerDnsName
+                ECS_EXECUTION_ROLE_ARN: ecsExecutionRole.roleArn,
+                ALB_ARN: this.alb.loadBalancerArn,
+                ALB_LISTENER_ARN: httpsListener.listenerArn,
+                CONTAINER_SECURITY_GROUP_ID: containerSecurityGroup.securityGroupId
             },
         });
 
@@ -209,9 +246,10 @@ export class MainStack extends cdk.Stack {
         // ========================================
         // BECKEND PERMISSIONS
         // ========================================
+
+        deploymentFunction.addToRolePolicy(new iam.PolicyStatement({ actions: ['ecs:*', 'ec2:*', 'elasticloadbalancing:*', 'iam:PassRole'], resources: ['*'] }));
         deploymentsTable.grantReadWriteData(deploymentFunction);
         deploymentsTable.grantReadWriteData(managementFunction);
-        ecrRepository.grantPullPush(deploymentFunction);
 
         // ECS and Load Balancer permissions
         const ecsPolicy = new iam.PolicyStatement({
@@ -233,7 +271,9 @@ export class MainStack extends cdk.Stack {
             resources: ['*']
         });
 
+
         deploymentFunction.addToRolePolicy(ecsPolicy);
+        deploymentFunction.addToRolePolicy(new iam.PolicyStatement({ actions: ['ecs:*', 'ec2:*', 'elasticloadbalancing:*', 'iam:PassRole'], resources: ['*'] }));
         managementFunction.addToRolePolicy(ecsPolicy);
 
         // Route53 permissions for creating subdomains
@@ -297,7 +337,7 @@ export class MainStack extends cdk.Stack {
         // CloudFront distribution
         this.distribution = new cloudfront.Distribution(this, 'Distribution', {
             domainNames: [domainName],
-            certificate: this.certificate,
+            certificate: this.certificateApp,
             defaultRootObject: 'index.html',
             errorResponses: [
                 {
@@ -451,11 +491,6 @@ export class MainStack extends cdk.Stack {
         new cdk.CfnOutput(this, 'BucketName', {
             value: this.bucket.bucketName,
             description: 'Frontend S3 Bucket Name'
-        });
-
-        new cdk.CfnOutput(this, 'ECRRepositoryURI', {
-            value: ecrRepository.repositoryUri,
-            description: 'ECR repository URI'
         });
 
         new cdk.CfnOutput(this, 'ClusterName', {
