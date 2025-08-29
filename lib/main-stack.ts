@@ -14,6 +14,7 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as targets from 'aws-cdk-lib/aws-route53-targets';
+import * as rds from 'aws-cdk-lib/aws-rds';
 import { Construct } from 'constructs';
 
 export class MainStack extends cdk.Stack {
@@ -25,6 +26,7 @@ export class MainStack extends cdk.Stack {
     public readonly certificateApp: acm.ICertificate;
     public readonly deploymentsTable: dynamodb.Table;
     public readonly alb: elbv2.ApplicationLoadBalancer;
+    public readonly rdsInstance: rds.DatabaseInstance;
 
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
         super(scope, id, props);
@@ -62,12 +64,17 @@ export class MainStack extends cdk.Stack {
 
         const vpc = new ec2.Vpc(this, 'InferenceVPC', {
             maxAzs: 2,
-            natGateways: 0,
+            natGateways: 1,
             subnetConfiguration: [
                 {
                     cidrMask: 24,
                     name: 'Public',
                     subnetType: ec2.SubnetType.PUBLIC,
+                },
+                {
+                    cidrMask: 24,
+                    name: 'Private',
+                    subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
                 }
             ]
         });
@@ -82,7 +89,7 @@ export class MainStack extends cdk.Stack {
         // ==========================
         // SECURITY GROUPS
         // ==========================
-        
+
         // ALB Security Group 
         const albSecurityGroup = new ec2.SecurityGroup(this, 'ALBSecurityGroup', {
             vpc,
@@ -101,6 +108,53 @@ export class MainStack extends cdk.Stack {
             ec2.Peer.anyIpv4(),
             ec2.Port.tcp(80),
             'Allow HTTP inbound to ALB'
+        );
+
+        // Security Group for containers
+        const containerSecurityGroup = new ec2.SecurityGroup(this, 'ContainerSecurityGroup', {
+            vpc,
+            description: 'Security group for NodeHub containers',
+            allowAllOutbound: true,
+        });
+
+        // Allow HTTP traffic from anywhere
+        containerSecurityGroup.addIngressRule(
+            ec2.Peer.anyIpv4(),
+            ec2.Port.tcp(3000),
+            'Allow HTTP traffic to containers'
+        );
+
+        containerSecurityGroup.addIngressRule(
+            albSecurityGroup,
+            ec2.Port.tcp(3000),
+            'Allow ALB to reach containers'
+        );
+
+        // Add explicit outbound rules for ECR and CloudWatch access
+        containerSecurityGroup.addEgressRule(
+            ec2.Peer.anyIpv4(),
+            ec2.Port.tcp(443),
+            'Allow HTTPS outbound for ECR/CloudWatch'
+        );
+
+        containerSecurityGroup.addEgressRule(
+            ec2.Peer.anyIpv4(),
+            ec2.Port.tcp(80),
+            'Allow HTTP outbound'
+        );
+
+        // MySQL Security Group
+        const mysqlSecurityGroup = new ec2.SecurityGroup(this, 'MySQLSecurityGroup', {
+            vpc,
+            description: 'Security group for shared MySQL RDS',
+            allowAllOutbound: false,
+        });
+
+        // Allow MySQL access from containers
+        mysqlSecurityGroup.addIngressRule(
+            containerSecurityGroup,
+            ec2.Port.tcp(3306),
+            'Allow container access to MySQL'
         );
 
         // ==========================
@@ -159,6 +213,28 @@ export class MainStack extends cdk.Stack {
         });
 
         // ========================================
+        // SHARED RDS MYSQL DATABASE
+        // ========================================
+
+        this.rdsInstance = new rds.DatabaseInstance(this, 'InferenceBrokerMySQL', {
+            engine: rds.DatabaseInstanceEngine.mysql({
+                version: rds.MysqlEngineVersion.VER_8_0
+            }),
+            instanceType: ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.MICRO),
+            credentials: rds.Credentials.fromPassword('root', cdk.SecretValue.unsafePlainText('123456')),
+            vpc,
+            vpcSubnets: {
+                subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS
+            },
+            securityGroups: [mysqlSecurityGroup],
+            databaseName: 'provider_db',
+            port: 3306,
+            removalPolicy: cdk.RemovalPolicy.DESTROY,
+            deleteAutomatedBackups: true,
+            backupRetention: cdk.Duration.days(1),
+        });
+
+        // ========================================
         // LAMBDA FUNCTIONS
         // ========================================
 
@@ -175,7 +251,7 @@ export class MainStack extends cdk.Stack {
             retention: logs.RetentionDays.ONE_WEEK,
             removalPolicy: cdk.RemovalPolicy.DESTROY,
         });
- 
+
         // ECS Task Execution Role
         const ecsExecutionRole = new iam.Role(this, 'ECSExecutionRole', {
             assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
@@ -208,39 +284,8 @@ export class MainStack extends cdk.Stack {
 
         // Grant CloudWatch logs permissions to ECS execution role
         ecsLogGroup.grantWrite(ecsExecutionRole);
- 
-        // Security Group for containers
-        const containerSecurityGroup = new ec2.SecurityGroup(this, 'ContainerSecurityGroup', {
-            vpc,
-            description: 'Security group for NodeHub containers',
-            allowAllOutbound: true,
-        });
 
-        // Allow HTTP traffic from anywhere
-        containerSecurityGroup.addIngressRule(
-            ec2.Peer.anyIpv4(),
-            ec2.Port.tcp(3000),
-            'Allow HTTP traffic to containers'
-        );
- 
-        containerSecurityGroup.addIngressRule(
-            albSecurityGroup,
-            ec2.Port.tcp(3000),
-            'Allow ALB to reach containers'
-        );
 
-        // Add explicit outbound rules for ECR and CloudWatch access
-        containerSecurityGroup.addEgressRule(
-            ec2.Peer.anyIpv4(),
-            ec2.Port.tcp(443),
-            'Allow HTTPS outbound for ECR/CloudWatch'
-        );
-
-        containerSecurityGroup.addEgressRule(
-            ec2.Peer.anyIpv4(),
-            ec2.Port.tcp(80),
-            'Allow HTTP outbound'
-        );
 
         // Deployment Lambda Function
         const deploymentFunction = new lambda.Function(this, 'DeploymentFunction', {
@@ -261,7 +306,12 @@ export class MainStack extends cdk.Stack {
                 ALB_ARN: this.alb.loadBalancerArn,
                 ALB_LISTENER_ARN: httpsListener.listenerArn,
                 CONTAINER_SECURITY_GROUP_ID: containerSecurityGroup.securityGroupId,
-                ALB_SECURITY_GROUP_ID: albSecurityGroup.securityGroupId
+                ALB_SECURITY_GROUP_ID: albSecurityGroup.securityGroupId,
+                MYSQL_HOST: this.rdsInstance.instanceEndpoint.hostname,
+                MYSQL_PORT: this.rdsInstance.instanceEndpoint.port.toString(),
+                MYSQL_DATABASE: 'provider_db',
+                MYSQL_USER: 'provider',
+                MYSQL_PASSWORD: 'provider'
             },
         });
 
@@ -531,6 +581,11 @@ export class MainStack extends cdk.Stack {
         new cdk.CfnOutput(this, 'ClusterName', {
             value: this.cluster.clusterName,
             description: 'ECS cluster name'
+        });
+
+        new cdk.CfnOutput(this, 'MySQLEndpoint', {
+            value: this.rdsInstance.instanceEndpoint.hostname,
+            description: 'Shared MySQL RDS endpoint'
         });
     }
 
