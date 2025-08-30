@@ -46,8 +46,9 @@ exports.handler = async (event) => {
     // 1. Create deployment-specific config files
     await createConfigFiles(deploymentId, {
       walletAddress,
-      modelService, 
-      modelIdentifier
+      modelService,
+      modelIdentifier,
+      walletPrivateKey
     });
 
     // 2. Create Multi-Container Task Definition
@@ -131,12 +132,12 @@ async function createMultiContainerTaskDefinition(deploymentId) {
     family: `nodehub-instance-${deploymentId}`,
     networkMode: 'awsvpc',
     requiresCompatibilities: ['FARGATE'],
-    cpu: '512',
-    memory: '1024',
+    cpu: '2048',
+    memory: '4096',
     executionRoleArn: process.env.ECS_EXECUTION_ROLE_ARN,
-    taskRoleArn: process.env.ECS_TASK_ROLE_ARN,  // Add task role for S3 access
+    taskRoleArn: process.env.ECS_TASK_ROLE_ARN,
     containerDefinitions: [
-      // Container 0: Config Init (runs first, downloads configs)
+      // Container 0: Config Init
       {
         name: 'config-init',
         image: 'amazonlinux:2023',
@@ -172,7 +173,44 @@ async function createMultiContainerTaskDefinition(deploymentId) {
           }
         }
       },
-      // Container 1: 0g-serving-provider-broker
+  
+      // Container 1: Hardhat Node with Contracts
+      {
+        name: 'hardhat-node-with-contract',
+        image: 'raven20241/hardhat-compute-network-contract:dev',
+        essential: true,
+        portMappings: [{ containerPort: 8545, protocol: 'tcp' }],
+        environment: [
+          { name: 'DEPLOYMENT_ID', value: deploymentId },
+          // Add memory limit for contract compilation
+          { name: 'NODE_OPTIONS', value: '--max-old-space-size=2048' }
+        ],
+        // Increase memory allocation for this container specifically
+        memoryReservation: 512,
+        logConfiguration: {
+          logDriver: 'awslogs',
+          options: {
+            'awslogs-group': '/ecs/nodehub',
+            'awslogs-region': process.env.AWS_REGION || 'ap-southeast-1',
+            'awslogs-stream-prefix': `${deploymentId}-hardhat`,
+            'awslogs-create-group': 'true'
+          }
+        },
+        healthCheck: {
+          command: ['CMD-SHELL', '/usr/local/bin/healthcheck.sh'],
+          interval: 30, // Increased interval
+          timeout: 15,  // Increased timeout  
+          retries: 10,  // More retries
+          startPeriod: 120 // Longer start period for contract deployment
+        },
+        dependsOn: [
+          {
+            containerName: 'config-init',
+            condition: 'SUCCESS'
+          }
+        ]
+      },
+      // Container 2: 0g-serving-provider-broker
       {
         name: '0g-serving-provider-broker',
         image: 'ghcr.io/0glabs/0g-serving-broker:0.2.1',
@@ -181,23 +219,13 @@ async function createMultiContainerTaskDefinition(deploymentId) {
         environment: [
           { name: 'PORT', value: '3080' },
           { name: 'CONFIG_FILE', value: '/etc/configs/config.yaml' },
+          { name: 'NETWORK', value: 'hardhat' },
           { name: 'MYSQL_HOST', value: process.env.MYSQL_HOST },
           { name: 'MYSQL_PORT', value: process.env.MYSQL_PORT },
           { name: 'MYSQL_DATABASE', value: process.env.MYSQL_DATABASE },
           { name: 'MYSQL_USER', value: process.env.MYSQL_USER },
           { name: 'MYSQL_PASSWORD', value: process.env.MYSQL_PASSWORD },
-          { name: 'ZK_PROVER_URL', value: process.env.ZK_PROVER_URL },
           { name: 'DEPLOYMENT_ID', value: deploymentId },
-          { name: 'CONFIG_S3_BUCKET', value: process.env.CONFIG_BUCKET },
-          { name: 'CONFIG_S3_KEY', value: `${deploymentId}/config.yaml` },
-          // Add database environment variables that might be expected
-          { name: 'DB_HOST', value: process.env.MYSQL_HOST },
-          { name: 'DB_PORT', value: process.env.MYSQL_PORT },
-          { name: 'DB_NAME', value: process.env.MYSQL_DATABASE },
-          { name: 'DB_USER', value: process.env.MYSQL_USER },
-          { name: 'DB_PASSWORD', value: process.env.MYSQL_PASSWORD },
-          { name: 'DATABASE_URL', value: `mysql://${process.env.MYSQL_USER}:${process.env.MYSQL_PASSWORD}@${process.env.MYSQL_HOST}:${process.env.MYSQL_PORT}/${process.env.MYSQL_DATABASE}` },
-          // Add DNS debugging
           { name: 'AWS_REGION', value: process.env.AWS_REGION || 'ap-southeast-1' }
         ],
         command: ['0g-inference-server'],
@@ -228,29 +256,28 @@ async function createMultiContainerTaskDefinition(deploymentId) {
           {
             containerName: 'config-init',
             condition: 'SUCCESS'
+          },
+          {
+            containerName: 'hardhat-node-with-contract',
+            condition: 'HEALTHY'
           }
         ]
       },
-      // Container 2: 0g-serving-provider-event
+  
+      // Container 3: 0g-serving-provider-event
       {
         name: '0g-serving-provider-event',
         image: 'ghcr.io/0glabs/0g-serving-broker:0.2.1',
         essential: true,
         environment: [
           { name: 'CONFIG_FILE', value: '/etc/configs/config.yaml' },
+          { name: 'NETWORK', value: 'hardhat' }, // Use Mock TEE
           { name: 'MYSQL_HOST', value: process.env.MYSQL_HOST },
           { name: 'MYSQL_PORT', value: process.env.MYSQL_PORT },
           { name: 'MYSQL_DATABASE', value: process.env.MYSQL_DATABASE },
           { name: 'MYSQL_USER', value: process.env.MYSQL_USER },
           { name: 'MYSQL_PASSWORD', value: process.env.MYSQL_PASSWORD },
-          { name: 'ZK_SETTLEMENT_URL', value: process.env.ZK_SETTLEMENT_URL },
-          { name: 'DEPLOYMENT_ID', value: deploymentId },
-          // Add database environment variables
-          { name: 'DB_HOST', value: process.env.MYSQL_HOST },
-          { name: 'DB_PORT', value: process.env.MYSQL_PORT },
-          { name: 'DB_NAME', value: process.env.MYSQL_DATABASE },
-          { name: 'DB_USER', value: process.env.MYSQL_USER },
-          { name: 'DB_PASSWORD', value: process.env.MYSQL_PASSWORD }
+          { name: 'DEPLOYMENT_ID', value: deploymentId }
         ],
         command: ['0g-inference-event'],
         mountPoints: [
@@ -279,8 +306,8 @@ async function createMultiContainerTaskDefinition(deploymentId) {
             condition: 'HEALTHY'
           }
         ]
-      },
-      // Container 3: nginx
+      }, 
+      // Container 4: nginx
       {
         name: 'nginx',
         image: 'nginx:1.27.0',
@@ -296,7 +323,7 @@ async function createMultiContainerTaskDefinition(deploymentId) {
         command: [
           '/bin/bash',
           '-c',
-          'cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.bak && nginx -g "daemon off;"'
+          'cp /etc/nginx/nginx.conf && nginx -g "daemon off;"'
         ],
         logConfiguration: {
           logDriver: 'awslogs',
@@ -308,7 +335,7 @@ async function createMultiContainerTaskDefinition(deploymentId) {
           }
         },
         healthCheck: {
-          command: ['CMD-SHELL', 'curl -f http://localhost:80/health || exit 1'],
+          command: ["CMD-SHELL", "curl", "-f", "http://localhost:80/stub_status"],
           interval: 30,
           timeout: 5,
           retries: 3,
@@ -318,10 +345,6 @@ async function createMultiContainerTaskDefinition(deploymentId) {
           {
             containerName: 'config-init',
             condition: 'SUCCESS'
-          },
-          {
-            containerName: '0g-serving-provider-broker',
-            condition: 'HEALTHY'
           }
         ]
       }
@@ -375,55 +398,14 @@ async function saveToDynamoDB(record) {
   }));
 }
 
+// Replace your createConfigFiles function with this corrected version based on real examples:
+
 async function createConfigFiles(deploymentId, deploymentParams) {
   console.log('Creating config files for:', deploymentId);
 
-  const { walletAddress, modelService, modelIdentifier } = deploymentParams;
-  
-  // Base config templat
-  const configTemplate = {
-    // Database configuration
-    database: {
-      provider: 'mysql',
-      host: process.env.MYSQL_HOST,
-      port: parseInt(process.env.MYSQL_PORT),
-      name: process.env.MYSQL_DATABASE,
-      user: process.env.MYSQL_USER,
-      password: process.env.MYSQL_PASSWORD,
-      charset: 'utf8mb4',
-      max_open_conns: 10,
-      max_idle_conns: 5
-    },
-    
-    // Server configuration
-    http: {
-      host: '0.0.0.0',
-      port: 3080
-    },
-    
-    // ZK configuration
-    prover: {
-      url: process.env.ZK_PROVER_URL
-    },
-    
-    settlement: {
-      url: process.env.ZK_SETTLEMENT_URL
-    },
-    
-    // Logging configuration
-    log: {
-      level: 'info',
-      format: 'json'
-    },
-    
-    // Deployment specific info
-    deployment_id: deploymentId,
-    wallet_address: walletAddress,
-    model_service: modelService,
-    model_identifier: modelIdentifier
-  };
+  const { walletAddress, modelService, modelIdentifier, walletPrivateKey } = deploymentParams;
 
-  // Nginx config template
+  // Nginx config template 
   const nginxConfig = `events { 
   worker_connections 1024;
 }
@@ -464,9 +446,9 @@ http {
       proxy_set_header Host \$host;
       proxy_set_header X-Real-IP \$remote_addr;
       proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-      proxy_set_header X-Forwarded-Proto \$scheme;
+      proxy_Set_header X-Forwarded-Proto \$scheme;
     }
-    
+
     # Default location - restricted access
     location / {
       allow 127.0.0.1;
@@ -482,15 +464,60 @@ http {
 }
 `;
 
+
+  const configYaml = `# 0G Serving Broker Configuration
+allowOrigins:
+  - "*"
+
+contractAddress: "${walletAddress}"
+
+database:
+  provider: root:12345678@tcp(${process.env.MYSQL_HOST}:${process.env.MYSQL_PORT})/${process.env.MYSQL_DATABASE}?charset=utf8mb4&parseTime=true
+
+event:
+  providerAddr: ":8088"
+
+interval:
+  autoSettleBufferTime: 60
+  forceSettlementProcessor: 600
+  settlementProcessor: 300
+
+networks:
+  ethereum0g:
+    url: "https://evmrpc-testnet.0g.ai"
+    chainID: 16601
+    privateKeys:
+      - ${walletPrivateKey}
+    transactionLimit: 1000000
+    gasEstimationBuffer: 10000
+  ethereumHardhat:
+    url: "http://localhost:8545"
+    chainID: 31337
+    privateKeys:
+      - ${walletPrivateKey}
+    transactionLimit: 9500000
+    gasEstimationBuffer: 0
+
+service:
+  servingUrl: "http://localhost:8080"
+  targetUrl: "http://localhost:8000"
+  inputPrice: 1
+  outputPrice: 1
+  type: "chatbot"
+  model: "llama-3.3-70b-instruct"
+  verifiability: "TeeML"
+
+zk:
+  provider: "${process.env.ZK_PROVER_URL}"
+  requestLength: 40
+`;
+
   // Upload config files to S3
   await Promise.all([
     s3Client.send(new PutObjectCommand({
       Bucket: process.env.CONFIG_BUCKET,
       Key: `${deploymentId}/config.yaml`,
-      Body: `# 0G Serving Broker Configuration
-database:
-  provider: root:12345678@tcp(${process.env.MYSQL_HOST}:${process.env.MYSQL_PORT})/${process.env.MYSQL_DATABASE}?charset=utf8mb4&parseTime=true
-`,
+      Body: configYaml,
       ContentType: 'application/yaml'
     })),
     s3Client.send(new PutObjectCommand({
