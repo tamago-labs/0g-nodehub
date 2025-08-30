@@ -31,6 +31,7 @@ export class MainStack extends cdk.Stack {
     public readonly rdsInstance: rds.DatabaseInstance;
     public readonly namespace: servicediscovery.PrivateDnsNamespace;
     public readonly zkServices: ZKServices;
+    public readonly configBucket: s3.Bucket;
 
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
         super(scope, id, props);
@@ -47,6 +48,17 @@ export class MainStack extends cdk.Stack {
         // Look up the existing hosted zone
         this.hostedZone = route53.HostedZone.fromLookup(this, 'HostedZone', {
             domainName: zoneName,
+        });
+
+        // ========================================
+        // CONFIGURATION MANAGEMENT
+        // ========================================
+
+        // S3 bucket for configuration files
+        this.configBucket = new s3.Bucket(this, 'ConfigBucket', {
+            bucketName: `nodehub-configs-${cdk.Aws.ACCOUNT_ID}-${cdk.Aws.REGION}`,
+            removalPolicy: cdk.RemovalPolicy.DESTROY,
+            blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
         });
 
        
@@ -231,7 +243,7 @@ export class MainStack extends cdk.Stack {
         // SHARED RDS MYSQL DATABASE
         // ========================================
 
-        this.rdsInstance = new rds.DatabaseInstance(this, 'InferenceBrokerMySQL', {
+        this.rdsInstance = new rds.DatabaseInstance(this, 'SharedMySQL', {
             engine: rds.DatabaseInstanceEngine.mysql({
                 version: rds.MysqlEngineVersion.VER_8_0
             }),
@@ -242,7 +254,7 @@ export class MainStack extends cdk.Stack {
                 subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS
             },
             securityGroups: [mysqlSecurityGroup],
-            databaseName: 'provider_db',
+            databaseName: 'provider',
             port: 3306,
             removalPolicy: cdk.RemovalPolicy.DESTROY,
             deleteAutomatedBackups: true,
@@ -281,13 +293,21 @@ export class MainStack extends cdk.Stack {
 
         
 
-        // ECS Task Execution Role
+        // ECS Task Execution Role (for ECS to pull images, logs)
         const ecsExecutionRole = new iam.Role(this, 'ECSExecutionRole', {
             assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
             managedPolicies: [
                 iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonECSTaskExecutionRolePolicy')
             ],
         });
+
+        // ECS Task Role (for containers to access AWS services)
+        const ecsTaskRole = new iam.Role(this, 'ECSTaskRole', {
+            assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
+        });
+
+        // Grant S3 config bucket access to ECS task role (for containers)
+        this.configBucket.grantRead(ecsTaskRole);
 
         // Add explicit ECR permissions to ensure private registry access
         ecsExecutionRole.addToPolicy(new iam.PolicyStatement({
@@ -314,6 +334,22 @@ export class MainStack extends cdk.Stack {
         // Grant CloudWatch logs permissions to ECS execution role
         ecsLogGroup.grantWrite(ecsExecutionRole);
 
+        // Grant S3 config bucket access to ECS execution role
+        this.configBucket.grantRead(ecsExecutionRole);
+
+        // Add explicit S3 permissions for config downloading
+        ecsExecutionRole.addToPolicy(new iam.PolicyStatement({
+            effect: iam.Effect.ALLOW,
+            actions: [
+                's3:GetObject',
+                's3:ListBucket'
+            ],
+            resources: [
+                this.configBucket.bucketArn,
+                `${this.configBucket.bucketArn}/*`
+            ]
+        }));
+
         // Deployment Lambda Function
         const deploymentFunction = new lambda.Function(this, 'DeploymentFunction', {
             runtime: lambda.Runtime.NODEJS_18_X,
@@ -330,18 +366,20 @@ export class MainStack extends cdk.Stack {
                 SUBNETS: vpc.publicSubnets.map(subnet => subnet.subnetId).join(','),
                 DOMAIN_NAME: zoneName,
                 ECS_EXECUTION_ROLE_ARN: ecsExecutionRole.roleArn,
+                ECS_TASK_ROLE_ARN: ecsTaskRole.roleArn,
                 ALB_ARN: this.alb.loadBalancerArn,
                 ALB_LISTENER_ARN: httpsListener.listenerArn,
                 CONTAINER_SECURITY_GROUP_ID: containerSecurityGroup.securityGroupId,
                 ALB_SECURITY_GROUP_ID: albSecurityGroup.securityGroupId,
                 MYSQL_HOST: this.rdsInstance.instanceEndpoint.hostname,
                 MYSQL_PORT: this.rdsInstance.instanceEndpoint.port.toString(),
-                MYSQL_DATABASE: 'provider_db',
-                MYSQL_USER: 'provider',
-                MYSQL_PASSWORD: 'provider',
+                MYSQL_DATABASE: 'provider',
+                MYSQL_USER: 'root',
+                MYSQL_PASSWORD: '12345678',
                 SERVICE_DISCOVERY_NAMESPACE: this.namespace.namespaceName,
                 ZK_PROVER_URL: 'http://zk-prover.nodehub.local:3001',
-                ZK_SETTLEMENT_URL: 'http://zk-settlement.nodehub.local:3002'
+                ZK_SETTLEMENT_URL: 'http://zk-settlement.nodehub.local:3002',
+                CONFIG_BUCKET: this.configBucket.bucketName
             },
         });
 
@@ -363,6 +401,7 @@ export class MainStack extends cdk.Stack {
         // ========================================
 
         deploymentFunction.addToRolePolicy(new iam.PolicyStatement({ actions: ['ecs:*', 'ec2:*', 'elasticloadbalancing:*', 'iam:PassRole'], resources: ['*'] }));
+        this.configBucket.grantReadWrite(deploymentFunction);
         deploymentsTable.grantReadWriteData(deploymentFunction);
         deploymentsTable.grantReadWriteData(managementFunction);
 
@@ -621,6 +660,11 @@ export class MainStack extends cdk.Stack {
         new cdk.CfnOutput(this, 'ServiceDiscoveryNamespace', {
             value: this.namespace.namespaceName,
             description: 'Service discovery namespace'
+        });
+
+        new cdk.CfnOutput(this, 'ConfigBucketName', {
+            value: this.configBucket.bucketName,
+            description: 'Configuration S3 bucket name'
         });
     }
 

@@ -3,12 +3,14 @@ const { ECSClient, RegisterTaskDefinitionCommand, CreateServiceCommand, Describe
 const { EC2Client, DescribeNetworkInterfacesCommand } = require("@aws-sdk/client-ec2");
 const { ElasticLoadBalancingV2Client, CreateTargetGroupCommand, CreateRuleCommand } = require('@aws-sdk/client-elastic-load-balancing-v2');
 const { DynamoDBClient, PutItemCommand } = require("@aws-sdk/client-dynamodb");
+const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
 const { marshall } = require("@aws-sdk/util-dynamodb");
 
 const ecsClient = new ECSClient({});
 const ec2Client = new EC2Client({});
 const elbClient = new ElasticLoadBalancingV2Client({});
 const dynamoClient = new DynamoDBClient({});
+const s3Client = new S3Client({});
 
 exports.handler = async (event) => {
   console.log('Deployment request:', JSON.stringify(event, null, 2));
@@ -41,24 +43,32 @@ exports.handler = async (event) => {
 
     const deploymentId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
-    // 1. Create Task Definition
-    const taskDefinitionArn = await createTaskDefinition(deploymentId);
+    // 1. Create deployment-specific config files
+    await createConfigFiles(deploymentId, {
+      walletAddress,
+      modelService, 
+      modelIdentifier
+    });
 
-    // 2. Create ALB Target Group
+    // 2. Create Multi-Container Task Definition
+    const taskDefinitionArn = await createMultiContainerTaskDefinition(deploymentId);
+
+    // 2. Create ALB Target Group 
     const tgResp = await elbClient.send(new CreateTargetGroupCommand({
-      Name: `tg-${deploymentId.slice(-8)}`, // ALB limit
-      Port: 3000,
+      Name: `tg-${deploymentId.slice(-8)}`,
+      Port: 80,
       Protocol: 'HTTP',
       VpcId: process.env.VPC_ID,
       TargetType: 'ip',
       HealthCheckProtocol: 'HTTP',
-      HealthCheckPort: '3000',
+      HealthCheckPort: '80',
       HealthCheckPath: '/health',
-      HealthCheckIntervalSeconds: 15,        // Check every 15 seconds
-      HealthCheckTimeoutSeconds: 10,         // 10 second timeout
-      HealthyThresholdCount: 2,              // 2 successful checks = healthy
-      UnhealthyThresholdCount: 3,            // 3 failed checks = unhealthy
-      Matcher: { HttpCode: '200' }           // Expect HTTP 200 response
+      HealthCheckIntervalSeconds: 30,
+      HealthCheckTimeoutSeconds: 10,
+      HealthyThresholdCount: 2,
+      UnhealthyThresholdCount: 5,
+      HealthCheckGracePeriodSeconds: 120,
+      Matcher: { HttpCode: '200' }
     }));
 
     const targetGroupArn = tgResp.TargetGroups[0].TargetGroupArn;
@@ -92,9 +102,9 @@ exports.handler = async (event) => {
 
     await saveToDynamoDB(deploymentRecord);
 
-    console.log(`Deployment initiated successfully: ${deploymentId} at ${deploymentRecord.url}`);
+    console.log(`Deployment initiated successfully: ${deploymentId} at ${deploymentRecord.publicEndpoint}`);
 
-    return { statusCode: 200, headers: getCorsHeaders(), body: JSON.stringify({ success: true, deploymentId, url: deploymentRecord.url }) };
+    return { statusCode: 200, headers: getCorsHeaders(), body: JSON.stringify({ success: true, deploymentId, url: deploymentRecord.publicEndpoint }) };
 
   } catch (error) {
     console.error('Handler error:', error);
@@ -114,44 +124,199 @@ function getCorsHeaders() {
   };
 }
 
-async function createTaskDefinition(deploymentId) {
-  console.log('Creating task definition for:', deploymentId);
+async function createMultiContainerTaskDefinition(deploymentId) {
+  console.log('Creating multi-container task definition for:', deploymentId);
 
   const taskDefinition = {
     family: `nodehub-instance-${deploymentId}`,
     networkMode: 'awsvpc',
     requiresCompatibilities: ['FARGATE'],
-    cpu: '256',
-    memory: '512',
+    cpu: '512',
+    memory: '1024',
     executionRoleArn: process.env.ECS_EXECUTION_ROLE_ARN,
-    // taskRoleArn: process.env.ECS_EXECUTION_ROLE_ARN,
-    containerDefinitions: [{
-      name: 'nodejs-app',
-      image: '057386374967.dkr.ecr.ap-southeast-1.amazonaws.com/nodehub-simple:latest',
-      essential: true,
-      portMappings: [{ containerPort: 3000, protocol: 'tcp' }],
-      environment: [
-        { name: 'PORT', value: '3000' },
-        { name: 'DEPLOYMENT_ID', value: deploymentId },
-        { name: 'MESSAGE', value: 'Hello from Simple NodeHub!' }
-      ],
-      logConfiguration: {
-        logDriver: 'awslogs',
-        options: {
-          'awslogs-group': '/ecs/nodehub',
-          'awslogs-region': process.env.AWS_REGION || 'ap-southeast-1',
-          'awslogs-stream-prefix': `${deploymentId}-proxy`,
-          'awslogs-create-group': 'true'
+    taskRoleArn: process.env.ECS_TASK_ROLE_ARN,  // Add task role for S3 access
+    containerDefinitions: [
+      // Container 0: Config Init (runs first, downloads configs)
+      {
+        name: 'config-init',
+        image: 'amazonlinux:2023',
+        essential: false,
+        environment: [
+          { name: 'CONFIG_S3_BUCKET', value: process.env.CONFIG_BUCKET },
+          { name: 'DEPLOYMENT_ID', value: deploymentId },
+          { name: 'AWS_DEFAULT_REGION', value: process.env.AWS_REGION || 'ap-southeast-1' }
+        ],
+        command: [
+          '/bin/bash',
+          '-c',
+          'yum update -y && yum install -y aws-cli && ' +
+          `echo "Downloading configs for ${deploymentId}..." && ` +
+          'aws s3 cp s3://$CONFIG_S3_BUCKET/' + `${deploymentId}/config.yaml /shared/config.yaml && ` +
+          'aws s3 cp s3://$CONFIG_S3_BUCKET/' + `${deploymentId}/nginx.conf /shared/nginx.conf && ` +
+          'echo "Config files downloaded successfully" && ' +
+          'ls -la /shared/'
+        ],
+        mountPoints: [
+          {
+            sourceVolume: 'shared-config',
+            containerPath: '/shared'
+          }
+        ],
+        logConfiguration: {
+          logDriver: 'awslogs',
+          options: {
+            'awslogs-group': '/ecs/nodehub',
+            'awslogs-region': process.env.AWS_REGION || 'ap-southeast-1',
+            'awslogs-stream-prefix': `${deploymentId}-config-init`,
+            'awslogs-create-group': 'true'
+          }
         }
       },
-      healthCheck: {
-        command: ['CMD-SHELL', 'wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1'],
-        interval: 30,
-        timeout: 5,
-        retries: 3,
-        startPeriod: 60 // Give more time for container to start
+      // Container 1: 0g-serving-provider-broker
+      {
+        name: '0g-serving-provider-broker',
+        image: 'ghcr.io/0glabs/0g-serving-broker:0.2.1',
+        essential: true,
+        portMappings: [{ containerPort: 3080, protocol: 'tcp' }],
+        environment: [
+          { name: 'PORT', value: '3080' },
+          { name: 'CONFIG_FILE', value: '/etc/config.yaml' },
+          { name: 'MYSQL_HOST', value: process.env.MYSQL_HOST },
+          { name: 'MYSQL_PORT', value: process.env.MYSQL_PORT },
+          { name: 'MYSQL_DATABASE', value: process.env.MYSQL_DATABASE },
+          { name: 'MYSQL_USER', value: process.env.MYSQL_USER },
+          { name: 'MYSQL_PASSWORD', value: process.env.MYSQL_PASSWORD },
+          { name: 'ZK_PROVER_URL', value: process.env.ZK_PROVER_URL },
+          { name: 'DEPLOYMENT_ID', value: deploymentId },
+          { name: 'CONFIG_S3_BUCKET', value: process.env.CONFIG_BUCKET },
+          { name: 'CONFIG_S3_KEY', value: `${deploymentId}/config.yaml` }
+        ],
+        command: ['0g-inference-server'],
+        mountPoints: [
+          {
+            sourceVolume: 'shared-config',
+            containerPath: '/etc/configs',
+            readOnly: true
+          }
+        ],
+        logConfiguration: {
+          logDriver: 'awslogs',
+          options: {
+            'awslogs-group': '/ecs/nodehub',
+            'awslogs-region': process.env.AWS_REGION || 'ap-southeast-1',
+            'awslogs-stream-prefix': `${deploymentId}-broker`,
+            'awslogs-create-group': 'true'
+          }
+        },
+        healthCheck: {
+          command: ['CMD-SHELL', 'curl -f http://localhost:3080/health || exit 1'],
+          interval: 30,
+          timeout: 10,
+          retries: 3,
+          startPeriod: 60
+        },
+        dependsOn: [
+          {
+            containerName: 'config-init',
+            condition: 'SUCCESS'
+          }
+        ]
+      },
+      // Container 2: 0g-serving-provider-event
+      {
+        name: '0g-serving-provider-event',
+        image: 'ghcr.io/0glabs/0g-serving-broker:0.2.1',
+        essential: true,
+        environment: [
+          { name: 'CONFIG_FILE', value: '/etc/config.yaml' },
+          { name: 'MYSQL_HOST', value: process.env.MYSQL_HOST },
+          { name: 'MYSQL_PORT', value: process.env.MYSQL_PORT },
+          { name: 'MYSQL_DATABASE', value: process.env.MYSQL_DATABASE },
+          { name: 'MYSQL_USER', value: process.env.MYSQL_USER },
+          { name: 'MYSQL_PASSWORD', value: process.env.MYSQL_PASSWORD },
+          { name: 'ZK_SETTLEMENT_URL', value: process.env.ZK_SETTLEMENT_URL },
+          { name: 'DEPLOYMENT_ID', value: deploymentId }
+        ],
+        command: ['0g-inference-event'],
+        mountPoints: [
+          {
+            sourceVolume: 'shared-config',
+            containerPath: '/etc/configs',
+            readOnly: true
+          }
+        ],
+        logConfiguration: {
+          logDriver: 'awslogs',
+          options: {
+            'awslogs-group': '/ecs/nodehub',
+            'awslogs-region': process.env.AWS_REGION || 'ap-southeast-1',
+            'awslogs-stream-prefix': `${deploymentId}-event`,
+            'awslogs-create-group': 'true'
+          }
+        },
+        dependsOn: [
+          {
+            containerName: 'config-init',
+            condition: 'SUCCESS'
+          },
+          {
+            containerName: '0g-serving-provider-broker',
+            condition: 'HEALTHY'
+          }
+        ]
+      },
+      // Container 3: nginx
+      {
+        name: 'nginx',
+        image: 'nginx:1.27.0',
+        essential: true,
+        portMappings: [{ containerPort: 80, protocol: 'tcp' }],
+        mountPoints: [
+          {
+            sourceVolume: 'shared-config',
+            containerPath: '/etc/nginx',
+            readOnly: true
+          }
+        ],
+        command: [
+          '/bin/bash',
+          '-c',
+          'cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.bak && nginx -g "daemon off;"'
+        ],
+        logConfiguration: {
+          logDriver: 'awslogs',
+          options: {
+            'awslogs-group': '/ecs/nodehub',
+            'awslogs-region': process.env.AWS_REGION || 'ap-southeast-1',
+            'awslogs-stream-prefix': `${deploymentId}-nginx`,
+            'awslogs-create-group': 'true'
+          }
+        },
+        healthCheck: {
+          command: ['CMD-SHELL', 'curl -f http://localhost:80/health || exit 1'],
+          interval: 30,
+          timeout: 5,
+          retries: 3,
+          startPeriod: 30
+        },
+        dependsOn: [
+          {
+            containerName: 'config-init',
+            condition: 'SUCCESS'
+          },
+          {
+            containerName: '0g-serving-provider-broker',
+            condition: 'HEALTHY'
+          }
+        ]
       }
-    }]
+    ],
+    volumes: [
+      {
+        name: 'shared-config',
+        host: {}
+      }
+    ]
   };
 
   const response = await ecsClient.send(new RegisterTaskDefinitionCommand(taskDefinition));
@@ -176,52 +341,12 @@ async function createECSService(deploymentId, taskDefinitionArn, targetGroupArn)
     },
     loadBalancers: [{
       targetGroupArn: targetGroupArn,
-      containerName: 'nodejs-app',
-      containerPort: 3000
+      containerName: 'nginx',  // Changed to nginx
+      containerPort: 80        // Changed to port 80
     }]
   }));
 
   return response.service.serviceArn;
-}
-
-async function getServiceEndpoint(clusterName, taskIdOrArn) {
-  console.log("Fetching service endpoint for:", taskIdOrArn);
-
-  // Wait briefly for task startup (in production: poll with backoff instead)
-  await new Promise((r) => setTimeout(r, 10000));
-
-  // Describe the ECS task directly by taskId or taskArn
-  const describeResp = await ecsClient.send(
-    new DescribeTasksCommand({
-      cluster: clusterName,
-      tasks: [taskIdOrArn], // must be real taskId or full taskArn
-    })
-  );
-
-  if (!describeResp.tasks || describeResp.tasks.length === 0) {
-    return { publicIp: null, publicDns: null };
-  }
-
-  const task = describeResp.tasks[0];
-  const eni = task.attachments[0].details.find(
-    (d) => d.name === "networkInterfaceId"
-  )?.value;
-
-  if (!eni) {
-    return { publicIp: null, publicDns: null };
-  }
-
-  const eniDesc = await ec2Client.send(
-    new DescribeNetworkInterfacesCommand({
-      NetworkInterfaceIds: [eni],
-    })
-  );
-
-  const assoc = eniDesc.NetworkInterfaces[0].Association || {};
-  return {
-    publicIp: assoc.PublicIp || null,
-    publicDns: assoc.PublicDnsName || null,
-  };
 }
 
 async function saveToDynamoDB(record) {
@@ -231,4 +356,116 @@ async function saveToDynamoDB(record) {
       removeUndefinedValues: true
     })
   }));
+}
+
+async function createConfigFiles(deploymentId, deploymentParams) {
+  console.log('Creating config files for:', deploymentId);
+
+  const { walletAddress, modelService, modelIdentifier } = deploymentParams;
+  
+  // Base config template
+  const configTemplate = {
+    server: {
+      host: '0.0.0.0',
+      port: 3080
+    },
+    database: {
+      host: process.env.MYSQL_HOST,
+      port: parseInt(process.env.MYSQL_PORT),
+      database: process.env.MYSQL_DATABASE,
+      username: process.env.MYSQL_USER,
+      password: process.env.MYSQL_PASSWORD
+    },
+    zk: {
+      prover_url: process.env.ZK_PROVER_URL,
+      settlement_url: process.env.ZK_SETTLEMENT_URL
+    },
+    deployment: {
+      id: deploymentId,
+      wallet_address: walletAddress,
+      model_service: modelService,
+      model_identifier: modelIdentifier
+    },
+    logging: {
+      level: 'info',
+      format: 'json'
+    }
+  };
+
+  // Nginx config template
+  const nginxConfig = `events { 
+  worker_connections 1024;
+}
+
+http {
+  upstream broker {
+    server localhost:3080;
+  }
+
+  server {
+    listen 80;
+    
+    # Health check endpoint
+    location /health {
+      return 200 '{"status":"healthy","service":"nginx-proxy","deployment":"${deploymentId}"}';
+      add_header Content-Type application/json;
+    }
+    
+    # Nginx status endpoint
+    location /stub_status {
+      stub_status on;
+      allow 127.0.0.1;
+      allow 172.16.0.0/12;
+      deny all;
+    }
+    
+    # Public API endpoints
+    location /v1/proxy {
+      proxy_pass http://broker;
+      proxy_set_header Host \$host;
+      proxy_set_header X-Real-IP \$remote_addr;
+      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+    
+    location /v1/quote {
+      proxy_pass http://broker;
+      proxy_set_header Host \$host;
+      proxy_set_header X-Real-IP \$remote_addr;
+      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+    
+    # Default location - restricted access
+    location / {
+      allow 127.0.0.1;
+      allow 172.16.0.0/12;
+      deny all;
+      proxy_pass http://broker;
+      proxy_set_header Host \$host;
+      proxy_set_header X-Real-IP \$remote_addr;
+      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+  }
+}
+`;
+
+  // Upload config files to S3
+  await Promise.all([
+    s3Client.send(new PutObjectCommand({
+      Bucket: process.env.CONFIG_BUCKET,
+      Key: `${deploymentId}/config.yaml`,
+      Body: JSON.stringify(configTemplate, null, 2),
+      ContentType: 'application/yaml'
+    })),
+    s3Client.send(new PutObjectCommand({
+      Bucket: process.env.CONFIG_BUCKET,
+      Key: `${deploymentId}/nginx.conf`,
+      Body: nginxConfig,
+      ContentType: 'text/plain'
+    }))
+  ]);
+
+  console.log(`Config files uploaded for deployment: ${deploymentId}`);
 }

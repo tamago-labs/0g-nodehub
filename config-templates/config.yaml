@@ -1,0 +1,24 @@
+server:
+  host: 0.0.0.0
+  port: ${PORT}
+
+database:
+  host: ${MYSQL_HOST}
+  port: ${MYSQL_PORT}
+  database: ${MYSQL_DATABASE}
+  username: ${MYSQL_USER}
+  password: ${MYSQL_PASSWORD}
+  
+zk:
+  prover_url: ${ZK_PROVER_URL}
+  settlement_url: ${ZK_SETTLEMENT_URL}
+
+deployment:
+  id: ${DEPLOYMENT_ID}
+  wallet_address: ${WALLET_ADDRESS}
+  model_service: ${MODEL_SERVICE}
+  model_identifier: ${MODEL_IDENTIFIER}
+
+logging:
+  level: info
+  format: json
