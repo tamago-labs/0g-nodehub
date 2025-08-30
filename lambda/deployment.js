@@ -180,7 +180,7 @@ async function createMultiContainerTaskDefinition(deploymentId) {
         portMappings: [{ containerPort: 3080, protocol: 'tcp' }],
         environment: [
           { name: 'PORT', value: '3080' },
-          { name: 'CONFIG_FILE', value: '/etc/config.yaml' },
+          { name: 'CONFIG_FILE', value: '/etc/configs/config.yaml' },
           { name: 'MYSQL_HOST', value: process.env.MYSQL_HOST },
           { name: 'MYSQL_PORT', value: process.env.MYSQL_PORT },
           { name: 'MYSQL_DATABASE', value: process.env.MYSQL_DATABASE },
@@ -189,7 +189,16 @@ async function createMultiContainerTaskDefinition(deploymentId) {
           { name: 'ZK_PROVER_URL', value: process.env.ZK_PROVER_URL },
           { name: 'DEPLOYMENT_ID', value: deploymentId },
           { name: 'CONFIG_S3_BUCKET', value: process.env.CONFIG_BUCKET },
-          { name: 'CONFIG_S3_KEY', value: `${deploymentId}/config.yaml` }
+          { name: 'CONFIG_S3_KEY', value: `${deploymentId}/config.yaml` },
+          // Add database environment variables that might be expected
+          { name: 'DB_HOST', value: process.env.MYSQL_HOST },
+          { name: 'DB_PORT', value: process.env.MYSQL_PORT },
+          { name: 'DB_NAME', value: process.env.MYSQL_DATABASE },
+          { name: 'DB_USER', value: process.env.MYSQL_USER },
+          { name: 'DB_PASSWORD', value: process.env.MYSQL_PASSWORD },
+          { name: 'DATABASE_URL', value: `mysql://${process.env.MYSQL_USER}:${process.env.MYSQL_PASSWORD}@${process.env.MYSQL_HOST}:${process.env.MYSQL_PORT}/${process.env.MYSQL_DATABASE}` },
+          // Add DNS debugging
+          { name: 'AWS_REGION', value: process.env.AWS_REGION || 'ap-southeast-1' }
         ],
         command: ['0g-inference-server'],
         mountPoints: [
@@ -228,14 +237,20 @@ async function createMultiContainerTaskDefinition(deploymentId) {
         image: 'ghcr.io/0glabs/0g-serving-broker:0.2.1',
         essential: true,
         environment: [
-          { name: 'CONFIG_FILE', value: '/etc/config.yaml' },
+          { name: 'CONFIG_FILE', value: '/etc/configs/config.yaml' },
           { name: 'MYSQL_HOST', value: process.env.MYSQL_HOST },
           { name: 'MYSQL_PORT', value: process.env.MYSQL_PORT },
           { name: 'MYSQL_DATABASE', value: process.env.MYSQL_DATABASE },
           { name: 'MYSQL_USER', value: process.env.MYSQL_USER },
           { name: 'MYSQL_PASSWORD', value: process.env.MYSQL_PASSWORD },
           { name: 'ZK_SETTLEMENT_URL', value: process.env.ZK_SETTLEMENT_URL },
-          { name: 'DEPLOYMENT_ID', value: deploymentId }
+          { name: 'DEPLOYMENT_ID', value: deploymentId },
+          // Add database environment variables
+          { name: 'DB_HOST', value: process.env.MYSQL_HOST },
+          { name: 'DB_PORT', value: process.env.MYSQL_PORT },
+          { name: 'DB_NAME', value: process.env.MYSQL_DATABASE },
+          { name: 'DB_USER', value: process.env.MYSQL_USER },
+          { name: 'DB_PASSWORD', value: process.env.MYSQL_PASSWORD }
         ],
         command: ['0g-inference-event'],
         mountPoints: [
@@ -339,6 +354,8 @@ async function createECSService(deploymentId, taskDefinitionArn, targetGroupArn)
         securityGroups: [process.env.CONTAINER_SECURITY_GROUP_ID]
       }
     },
+    serviceRegistries: [],  // Ensure service discovery doesn't interfere
+    enableExecuteCommand: true,  // For debugging if needed
     loadBalancers: [{
       targetGroupArn: targetGroupArn,
       containerName: 'nginx',  // Changed to nginx
@@ -363,33 +380,47 @@ async function createConfigFiles(deploymentId, deploymentParams) {
 
   const { walletAddress, modelService, modelIdentifier } = deploymentParams;
   
-  // Base config template
+  // Base config templat
   const configTemplate = {
-    server: {
+    // Database configuration
+    database: {
+      provider: 'mysql',
+      host: process.env.MYSQL_HOST,
+      port: parseInt(process.env.MYSQL_PORT),
+      name: process.env.MYSQL_DATABASE,
+      user: process.env.MYSQL_USER,
+      password: process.env.MYSQL_PASSWORD,
+      charset: 'utf8mb4',
+      max_open_conns: 10,
+      max_idle_conns: 5
+    },
+    
+    // Server configuration
+    http: {
       host: '0.0.0.0',
       port: 3080
     },
-    database: {
-      host: process.env.MYSQL_HOST,
-      port: parseInt(process.env.MYSQL_PORT),
-      database: process.env.MYSQL_DATABASE,
-      username: process.env.MYSQL_USER,
-      password: process.env.MYSQL_PASSWORD
+    
+    // ZK configuration
+    prover: {
+      url: process.env.ZK_PROVER_URL
     },
-    zk: {
-      prover_url: process.env.ZK_PROVER_URL,
-      settlement_url: process.env.ZK_SETTLEMENT_URL
+    
+    settlement: {
+      url: process.env.ZK_SETTLEMENT_URL
     },
-    deployment: {
-      id: deploymentId,
-      wallet_address: walletAddress,
-      model_service: modelService,
-      model_identifier: modelIdentifier
-    },
-    logging: {
+    
+    // Logging configuration
+    log: {
       level: 'info',
       format: 'json'
-    }
+    },
+    
+    // Deployment specific info
+    deployment_id: deploymentId,
+    wallet_address: walletAddress,
+    model_service: modelService,
+    model_identifier: modelIdentifier
   };
 
   // Nginx config template
@@ -456,7 +487,10 @@ http {
     s3Client.send(new PutObjectCommand({
       Bucket: process.env.CONFIG_BUCKET,
       Key: `${deploymentId}/config.yaml`,
-      Body: JSON.stringify(configTemplate, null, 2),
+      Body: `# 0G Serving Broker Configuration
+database:
+  provider: root:12345678@tcp(${process.env.MYSQL_HOST}:${process.env.MYSQL_PORT})/${process.env.MYSQL_DATABASE}?charset=utf8mb4&parseTime=true
+`,
       ContentType: 'application/yaml'
     })),
     s3Client.send(new PutObjectCommand({
