@@ -1,13 +1,11 @@
 import type { Metadata } from "next";
-import "./globals.css";
-import Head from 'next/head'
-import { Inter } from "next/font/google";
+import "./globals.css"; 
+import { Sora } from "next/font/google"
 import { Providers } from "./providers"
-import Header from "@/components/Header";
-import Footer from "@/components/Footer"
+import Sidebar from "@/components/Sidebar";
 
-const InterFont = Inter({
-  weight: ["400", "500", "700"],
+const Font = Sora({
+  weight: ["400", "500", "600", "700"],
   subsets: ["latin"],
 });
 
@@ -23,13 +21,17 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={InterFont.className}>
+      <body className={Font.className}>
         <Providers>
-          <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-gray-50 relative overflow-hidden">
-            <div className="flex flex-col min-h-screen w-full">
-              <Header />
-              {children}
-              <Footer />
+          <div className="min-h-screen bg-gradient-to-b from-black via-gray-950 to-black relative overflow-hidden">
+             
+            
+            {/* Main Layout */}
+            <div className="flex min-h-screen relative z-10">
+              <Sidebar />
+              <main className="flex-1 ml-64">
+                {children}
+              </main>
             </div>
           </div>
         </Providers>

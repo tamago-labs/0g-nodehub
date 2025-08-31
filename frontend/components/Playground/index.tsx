@@ -143,57 +143,51 @@ const Playground = () => {
     }, []);
 
     return (
-        <div className=" w-full max-w-7xl flex flex-col mx-auto px-4 sm:px-6 lg:px-8 py-8  ">
-            {/* Header */}
-            <div className="mb-6">
-                <h1 className="text-3xl font-bold text-gray-900 mb-2">Playground</h1>
-                <p className="text-gray-600">Test and interact with your inference nodes</p>
-            </div>
-
+        <div className="w-full max-w-7xl flex flex-col mx-auto p-6">
             {/* Node Loader */}
             {!nodeLoaded && (
-                <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-                    <h2 className="text-lg font-semibold text-gray-900 mb-4">Load Node</h2>
+                <div className="bg-gradient-to-br from-black to-gray-950 border border-gray-800 rounded-xl p-6 mb-6">
+                    <h2 className="text-lg font-semibold text-white mb-4">Load Node</h2>
                     <div className="flex space-x-4">
                         <input
                             type="text"
                             value={deploymentId}
                             onChange={(e) => setDeploymentId(e.target.value)}
                             placeholder="Enter deployment ID (e.g., dp-7f3a9b2c8e1d)"
-                            className="flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                            className="flex-1 px-4 py-3 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                             disabled={loading}
                         />
                         <button
                             onClick={loadNode}
                             disabled={loading || !deploymentId.trim()}
-                            className={`flex items-center space-x-2 px-4 py-2 rounded-md font-medium ${loading || !deploymentId.trim()
-                                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                                    : 'bg-blue-600 text-white hover:bg-blue-700'
+                            className={`flex items-center space-x-2 px-6 py-3 rounded-lg font-medium transition-all duration-200 ${loading || !deploymentId.trim()
+                                    ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                                    : 'bg-purple-600 text-white hover:bg-purple-700 shadow-lg hover:shadow-purple-500/25'
                                 }`}
                         >
                             {loading ? (
-                                <Loader2 className="w-4 h-4 animate-spin" />
+                                <Loader2 className="w-5 h-5 animate-spin" />
                             ) : (
-                                <Play className="w-4 h-4" />
+                                <Play className="w-5 h-5" />
                             )}
                             <span>{loading ? 'Loading...' : 'Load Node'}</span>
                         </button>
                     </div>
 
                     {/* Quick Load Examples */}
-                    <div className="mt-4">
-                        <p className="text-sm text-gray-500 mb-2">Quick load examples:</p>
-                        <div className="flex flex-wrap gap-2">
+                    <div className="mt-6">
+                        <p className="text-sm text-gray-400 mb-3">Quick load examples:</p>
+                        <div className="flex flex-wrap gap-3">
                             <button
                                 onClick={() => setDeploymentId('dp-7f3a9b2c8e1d')}
-                                className="px-3 py-1 text-xs bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
+                                className="px-4 py-2 text-sm bg-gray-900 text-gray-300 rounded-lg hover:bg-gray-800 border border-gray-700 hover:border-purple-500 transition-all duration-200"
                                 disabled={loading}
                             >
                                 dp-7f3a9b2c8e1d (Llama 3.3)
                             </button>
                             <button
                                 onClick={() => setDeploymentId('dp-4c8d9a1b5f7e')}
-                                className="px-3 py-1 text-xs bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
+                                className="px-4 py-2 text-sm bg-gray-900 text-gray-300 rounded-lg hover:bg-gray-800 border border-gray-700 hover:border-purple-500 transition-all duration-200"
                                 disabled={loading}
                             >
                                 dp-4c8d9a1b5f7e (DeepSeek R1)
@@ -205,13 +199,13 @@ const Playground = () => {
 
             {/* Node Info Bar */}
             {nodeLoaded && nodeInfo && (
-                <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
+                <div className="bg-green-900/20 border border-green-600/30 rounded-xl p-4 mb-6">
                     <div className="flex items-center justify-between">
                         <div className="flex items-center space-x-3">
-                            <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                            <div className="w-3 h-3 bg-green-400 rounded-full animate-pulse"></div>
                             <div>
-                                <p className="font-medium text-green-900">Connected to {nodeInfo.deploymentId}</p>
-                                <p className="text-sm text-green-700">{nodeInfo.aiModel}</p>
+                                <p className="font-medium text-green-300">Connected to {nodeInfo.deploymentId}</p>
+                                <p className="text-sm text-green-200">{nodeInfo.aiModel}</p>
                             </div>
                         </div>
                         <button
@@ -220,7 +214,7 @@ const Playground = () => {
                                 setNodeInfo(null);
                                 setMessages([]);
                             }}
-                            className="text-green-700 hover:text-green-900 text-sm font-medium"
+                            className="text-green-300 hover:text-green-100 text-sm font-medium px-3 py-1 rounded-lg hover:bg-green-800/20 transition-all duration-200"
                         >
                             Disconnect
                         </button>
@@ -229,57 +223,57 @@ const Playground = () => {
             )}
 
             {/* Chat Container */}
-            <div className="flex-1 bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col">
+            <div className="flex-1 bg-gradient-to-br from-black to-gray-950 border border-gray-800 rounded-xl flex flex-col overflow-hidden">
                 {/* Messages */}
-                <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                <div className="flex-1 overflow-y-auto p-6 space-y-6 sidebar-scroll">
                     {messages.length === 0 && nodeLoaded && (
-                        <div className="text-center text-gray-500 py-8">
-                            <Bot className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-                            <p>Start a conversation with your inference node!</p>
-                            <p className="text-sm mt-1">Type a message below to begin.</p>
+                        <div className="text-center text-gray-500 py-12">
+                            <Bot className="w-16 h-16 mx-auto mb-6 text-gray-600 opacity-50" />
+                            <p className="text-lg text-white mb-2">Start a conversation with your inference node!</p>
+                            <p className="text-sm">Type a message below to begin testing your AI model.</p>
                         </div>
                     )}
 
                     {messages.map((message: any) => (
                         <div key={message.id} className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}>
-                            <div className={`flex space-x-3 max-w-3xl ${message.type === 'user' ? 'flex-row-reverse space-x-reverse' : ''}`}>
-                                <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${message.type === 'user'
-                                        ? 'bg-blue-600 text-white'
+                            <div className={`flex space-x-4 max-w-4xl ${message.type === 'user' ? 'flex-row-reverse space-x-reverse' : ''}`}>
+                                <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${message.type === 'user'
+                                        ? 'bg-purple-600'
                                         : message.type === 'system'
-                                            ? 'bg-gray-500 text-white'
+                                            ? 'bg-gray-600'
                                             : message.type === 'error'
-                                                ? 'bg-red-500 text-white'
-                                                : 'bg-purple-600 text-white'
+                                                ? 'bg-red-600'
+                                                : 'bg-gray-700'
                                     }`}>
                                     {message.type === 'user' ? (
-                                        <User className="w-4 h-4" />
+                                        <User className="w-5 h-5 text-white" />
                                     ) : message.type === 'error' ? (
-                                        <AlertCircle className="w-4 h-4" />
+                                        <AlertCircle className="w-5 h-5 text-white" />
                                     ) : (
-                                        <Bot className="w-4 h-4" />
+                                        <Bot className="w-5 h-5 text-white" />
                                     )}
                                 </div>
                                 <div className={`flex-1 ${message.type === 'user' ? 'text-right' : ''}`}>
-                                    <div className={`inline-block px-4 py-2 rounded-lg ${message.type === 'user'
-                                            ? 'bg-blue-600 text-white'
+                                    <div className={`inline-block px-4 py-3 rounded-xl max-w-full ${message.type === 'user'
+                                            ? 'bg-purple-600 text-white'
                                             : message.type === 'system'
-                                                ? 'bg-gray-100 text-gray-700'
+                                                ? 'bg-gray-800 text-gray-200 border border-gray-700'
                                                 : message.type === 'error'
-                                                    ? 'bg-red-50 text-red-800 border border-red-200'
-                                                    : 'bg-gray-100 text-gray-900'
+                                                    ? 'bg-red-900/30 text-red-300 border border-red-600/30'
+                                                    : 'bg-gray-800 text-white border border-gray-700'
                                         }`}>
                                         <p className="whitespace-pre-wrap">{message.content}</p>
                                     </div>
-                                    <div className="flex items-center space-x-2 mt-1">
+                                    <div className="flex items-center space-x-3 mt-2">
                                         <p className="text-xs text-gray-500">
                                             {message.timestamp.toLocaleTimeString()}
                                         </p>
                                         {message.type === 'assistant' && (
                                             <button
                                                 onClick={() => copyMessage(message.content)}
-                                                className="text-gray-400 hover:text-gray-600"
+                                                className="text-gray-500 hover:text-gray-300 transition-colors duration-200"
                                             >
-                                                <Copy className="w-3 h-3" />
+                                                <Copy className="w-4 h-4" />
                                             </button>
                                         )}
                                     </div>
@@ -290,15 +284,15 @@ const Playground = () => {
 
                     {sending && (
                         <div className="flex justify-start">
-                            <div className="flex space-x-3 max-w-3xl">
-                                <div className="flex-shrink-0 w-8 h-8 rounded-full bg-purple-600 text-white flex items-center justify-center">
-                                    <Bot className="w-4 h-4" />
+                            <div className="flex space-x-4 max-w-4xl">
+                                <div className="flex-shrink-0 w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center">
+                                    <Bot className="w-5 h-5 text-white" />
                                 </div>
                                 <div className="flex-1">
-                                    <div className="inline-block px-4 py-2 rounded-lg bg-gray-100 text-gray-900">
-                                        <div className="flex items-center space-x-2">
-                                            <Loader2 className="w-4 h-4 animate-spin" />
-                                            <span>Thinking...</span>
+                                    <div className="inline-block px-4 py-3 rounded-xl bg-gray-800 text-white border border-gray-700">
+                                        <div className="flex items-center space-x-3">
+                                            <Loader2 className="w-5 h-5 animate-spin text-purple-400" />
+                                            <span>AI is thinking...</span>
                                         </div>
                                     </div>
                                 </div>
@@ -311,29 +305,29 @@ const Playground = () => {
 
                 {/* Input Area */}
                 {nodeLoaded && (
-                    <div className="border-t border-gray-200 p-4">
+                    <div className="border-t border-gray-800 p-6 bg-gradient-to-r from-gray-950 to-black">
                         <div className="flex space-x-4">
                             <textarea
                                 value={inputMessage}
                                 onChange={(e) => setInputMessage(e.target.value)}
                                 onKeyPress={handleKeyPress}
                                 placeholder="Type your message... (Press Enter to send)"
-                                className="flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 resize-none"
-                                // rows="1"
+                                className="flex-1 px-4 py-3 bg-black border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none"
+                                rows={1}
                                 disabled={sending}
                             />
                             <button
                                 onClick={sendMessage}
                                 disabled={sending || !inputMessage.trim()}
-                                className={`flex items-center space-x-2 px-4 py-2 rounded-md font-medium ${sending || !inputMessage.trim()
-                                        ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                                        : 'bg-blue-600 text-white hover:bg-blue-700'
+                                className={`flex items-center space-x-2 px-6 py-3 rounded-lg font-medium transition-all duration-200 ${sending || !inputMessage.trim()
+                                        ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                                        : 'bg-purple-600 text-white hover:bg-purple-700 shadow-lg hover:shadow-purple-500/25'
                                     }`}
                             >
                                 {sending ? (
-                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                    <Loader2 className="w-5 h-5 animate-spin" />
                                 ) : (
-                                    <Send className="w-4 h-4" />
+                                    <Send className="w-5 h-5" />
                                 )}
                                 <span>Send</span>
                             </button>
