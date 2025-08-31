@@ -1,16 +1,16 @@
 // lambda/management.js
 const { ECSClient, DescribeServicesCommand, DeleteServiceCommand, UpdateServiceCommand } = require("@aws-sdk/client-ecs");
-const { ElasticLoadBalancingV2Client, DeleteTargetGroupCommand, DeleteRuleCommand } = require("@aws-sdk/client-elastic-load-balancing-v2");
-const { EC2Client, DeleteSecurityGroupCommand } = require("@aws-sdk/client-ec2");
+const { ElasticLoadBalancingV2Client, DeleteTargetGroupCommand, DescribeRulesCommand, DeleteRuleCommand } = require("@aws-sdk/client-elastic-load-balancing-v2");
 const { DynamoDBClient, QueryCommand, GetItemCommand, DeleteItemCommand, PutItemCommand } = require("@aws-sdk/client-dynamodb");
 const { CloudWatchLogsClient, FilterLogEventsCommand } = require("@aws-sdk/client-cloudwatch-logs");
+const { S3Client, DeleteObjectCommand } = require("@aws-sdk/client-s3");
 const { marshall, unmarshall } = require("@aws-sdk/util-dynamodb");
 
 const ecsClient = new ECSClient({});
 const elbClient = new ElasticLoadBalancingV2Client({});
-const ec2Client = new EC2Client({});
 const dynamoClient = new DynamoDBClient({});
 const logsClient = new CloudWatchLogsClient({});
+const s3Client = new S3Client({});
 
 exports.handler = async (event) => {
   console.log('Management request:', JSON.stringify(event, null, 2));
@@ -180,7 +180,6 @@ async function getDeployment(walletAddress, deploymentId, queryParams) {
   }
 }
 
-
 async function deleteDeployment(walletAddress, deploymentId) {
   try {
     // Get deployment details first
@@ -211,57 +210,93 @@ async function deleteDeployment(walletAddress, deploymentId) {
     // Delete AWS resources
     const deletePromises = [];
 
-    // Delete ECS service
+    // 1. Delete ECS service
     if (deployment.serviceArn) {
+      console.log('Deleting ECS service:', deployment.serviceArn);
       deletePromises.push(
         ecsClient.send(new UpdateServiceCommand({
           cluster: process.env.CLUSTER_NAME,
           service: deployment.serviceArn,
           desiredCount: 0
-        })).then(() =>
+        })).then(() => 
+          // Wait a bit for tasks to stop
+          new Promise(resolve => setTimeout(resolve, 10000))
+        ).then(() =>
           ecsClient.send(new DeleteServiceCommand({
             cluster: process.env.CLUSTER_NAME,
             service: deployment.serviceArn,
             force: true
           }))
-        )
+        ).catch(err => {
+          console.error('Error deleting ECS service:', err);
+          // Don't fail the whole operation
+        })
       );
     }
 
-    // Delete ALB target group
+    // 2. Delete ALB target group
     if (deployment.targetGroupArn) {
+      console.log('Deleting target group:', deployment.targetGroupArn);
       deletePromises.push(
-        elbClient.send(new DeleteTargetGroupCommand({
-          TargetGroupArn: deployment.targetGroupArn
-        }))
+        // Wait for ECS service to be deleted first
+        new Promise(resolve => setTimeout(resolve, 20000)).then(() =>
+          elbClient.send(new DeleteTargetGroupCommand({
+            TargetGroupArn: deployment.targetGroupArn
+          }))
+        ).catch(err => {
+          console.error('Error deleting target group:', err);
+        })
       );
     }
 
-    // Delete ALB listener rule
-    if (deployment.ruleArn) {
+    // 3. Delete ALB listener rule (find by host header pattern)
+    if (process.env.ALB_LISTENER_ARN) {
+      console.log('Looking for ALB rules to delete for deployment:', deploymentId);
       deletePromises.push(
-        elbClient.send(new DeleteRuleCommand({
-          RuleArn: deployment.ruleArn
-        }))
+        elbClient.send(new DescribeRulesCommand({
+          ListenerArn: process.env.ALB_LISTENER_ARN
+        })).then(rules => {
+          const deploymentRule = rules.Rules?.find(rule => 
+            rule.Conditions?.some(condition => 
+              condition.Values?.some(value => 
+                value.includes(`${deploymentId}.deploy.0gnodehub.com`)
+              )
+            )
+          );
+          
+          if (deploymentRule && deploymentRule.RuleArn) {
+            console.log('Found ALB rule to delete:', deploymentRule.RuleArn);
+            return elbClient.send(new DeleteRuleCommand({
+              RuleArn: deploymentRule.RuleArn
+            }));
+          }
+        }).catch(err => {
+          console.error('Error deleting ALB rule:', err);
+        })
       );
     }
 
-    // Delete security group (with retry logic)
-    if (deployment.securityGroupId) {
+    // 4. Delete S3 config files
+    if (process.env.CONFIG_BUCKET) {
+      console.log('Deleting S3 config files for deployment:', deploymentId);
       deletePromises.push(
-        // Wait a bit before deleting security group to allow service to stop
-        new Promise(resolve => setTimeout(resolve, 30000)).then(() =>
-          ec2Client.send(new DeleteSecurityGroupCommand({
-            GroupId: deployment.securityGroupId
-          })).catch(err => {
-            console.error('Error deleting security group:', err);
-            // Don't fail the whole operation if security group deletion fails
-          })
-        )
+        Promise.all([
+          s3Client.send(new DeleteObjectCommand({
+            Bucket: process.env.CONFIG_BUCKET,
+            Key: `${deploymentId}/config.yaml`
+          })),
+          s3Client.send(new DeleteObjectCommand({
+            Bucket: process.env.CONFIG_BUCKET,
+            Key: `${deploymentId}/nginx.conf`
+          }))
+        ]).catch(err => {
+          console.error('Error deleting S3 config files:', err);
+        })
       );
     }
 
     // Wait for all deletions to complete
+    console.log('Waiting for all AWS resources to be deleted...');
     await Promise.allSettled(deletePromises);
 
     // Delete from DynamoDB
@@ -270,12 +305,15 @@ async function deleteDeployment(walletAddress, deploymentId) {
       Key: marshall({ walletAddress, deploymentId })
     }));
 
+    console.log('Deployment deleted successfully:', deploymentId);
+
     return {
       statusCode: 200,
       headers: getCorsHeaders(),
       body: JSON.stringify({
         success: true,
-        message: 'Deployment deleted successfully'
+        message: 'Deployment deleted successfully',
+        deploymentId
       })
     };
 

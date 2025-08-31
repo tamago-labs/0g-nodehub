@@ -542,18 +542,28 @@ networks:
     url: "http://localhost:8545"
     chainID: 31337
     privateKeys:
-      - ${walletPrivateKey}
+      - 59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
     transactionLimit: 9500000
     gasEstimationBuffer: 0
 
 service:
-  servingUrl: "http://localhost:8080"
-  targetUrl: "http://localhost:8000"
+  servingUrl: "https://${deploymentId}.deploy.0gnodehub.com"
+  targetUrl: "https://api.openai.com/v1"
   inputPrice: 1
   outputPrice: 1
   type: "chatbot"
-  model: "llama-3.3-70b-instruct"
+  model: "gpt-3.5-turbo"
   verifiability: "TeeML"
+  additionalSecret:
+    Authorization: Bearer sk-proj-xxxx
+
+zkProver:
+  provider: "localhost:3001"
+  requestLength: 40
+
+zkSettlement:
+  provider: "localhost:3001"
+  requestLength: 40
 `;
 
   // Upload config files to S3

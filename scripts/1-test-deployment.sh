@@ -30,8 +30,8 @@ echo -e "${GREEN}✅ Using API URL: $API_URL${NC}"
 echo -e "${GREEN}✅ Using Deployment Domain: $DEPLOYMENT_DOMAIN${NC}"
 
 # Test wallet address (put yours)
-TEST_WALLET=""
-TEST_PRIVATE_KEY=""
+TEST_WALLET="0x999999cf1046e68e36E1aA2E0E07105eDDD1f08E"
+TEST_PRIVATE_KEY="1234"
 
 echo ""
 echo -e "${YELLOW}🚀 Test 1: Creating a test deployment${NC}"
