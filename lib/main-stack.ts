@@ -377,7 +377,7 @@ export class MainStack extends cdk.Stack {
                 MYSQL_USER: 'root',
                 MYSQL_PASSWORD: '12345678',
                 SERVICE_DISCOVERY_NAMESPACE: this.namespace.namespaceName,
-                ZK_PROVER_URL: 'http://zk-prover.nodehub.local:3001',
+                // ZK_PROVER_URL: 'http://zk-prover.nodehub.local:3001',
                 // ZK_SETTLEMENT_URL: 'http://zk-settlement.nodehub.local:3002',
                 CONFIG_BUCKET: this.configBucket.bucketName
             },

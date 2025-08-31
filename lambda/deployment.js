@@ -198,10 +198,10 @@ async function createMultiContainerTaskDefinition(deploymentId) {
         },
         healthCheck: {
           command: ['CMD-SHELL', '/usr/local/bin/healthcheck.sh'],
-          interval: 30, // Increased interval
-          timeout: 15,  // Increased timeout  
-          retries: 10,  // More retries
-          startPeriod: 120 // Longer start period for contract deployment
+          interval: 30,  
+          timeout: 15,   
+          retries: 10, 
+          startPeriod: 120  
         },
         dependsOn: [
           {
@@ -263,7 +263,6 @@ async function createMultiContainerTaskDefinition(deploymentId) {
           }
         ]
       },
-  
       // Container 3: 0g-serving-provider-event
       {
         name: '0g-serving-provider-event',
@@ -322,8 +321,10 @@ async function createMultiContainerTaskDefinition(deploymentId) {
         ],
         command: [
           '/bin/bash',
-          '-c',
-          'cp /etc/nginx/nginx.conf && nginx -g "daemon off;"'
+          '-c', 
+          'while [ ! -f /etc/nginx/nginx.conf ]; do echo "Waiting for nginx.conf..."; sleep 2; done && ' +
+          'echo "Found nginx.conf, starting nginx..." && ' +
+          'nginx -g "daemon off;"'
         ],
         logConfiguration: {
           logDriver: 'awslogs',
@@ -398,8 +399,6 @@ async function saveToDynamoDB(record) {
   }));
 }
 
-// Replace your createConfigFiles function with this corrected version based on real examples:
-
 async function createConfigFiles(deploymentId, deploymentParams) {
   console.log('Creating config files for:', deploymentId);
 
@@ -407,69 +406,97 @@ async function createConfigFiles(deploymentId, deploymentParams) {
 
   // Nginx config template 
   const nginxConfig = `events { 
-  worker_connections 1024;
-}
-
-http {
-  upstream broker {
-    server localhost:3080;
+    worker_connections 1024;
   }
-
-  server {
-    listen 80;
-    
-    # Health check endpoint
-    location /health {
-      return 200 '{"status":"healthy","service":"nginx-proxy","deployment":"${deploymentId}"}';
-      add_header Content-Type application/json;
+  
+  http {
+    upstream broker {
+      server localhost:3080;
     }
-    
-    # Nginx status endpoint
-    location /stub_status {
-      stub_status on;
-      allow 127.0.0.1;
-      allow 172.16.0.0/12;
-      deny all;
+  
+    server {
+      listen 80;
+      
+      # Health check endpoint
+      location /health {
+        return 200 '{"status":"healthy","service":"nginx-proxy","deployment":"${deploymentId}"}';
+        add_header Content-Type application/json;
+      }
+      
+      # Nginx status endpoint
+      location /stub_status {
+        stub_status on;
+        allow 127.0.0.1;
+        allow 172.16.0.0/12;
+        deny all;
+      }
+      
+      # Public API endpoints
+      location /v1/proxy {
+        proxy_pass http://broker;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+      }
+      
+      location /v1/quote {
+        proxy_pass http://broker;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+      }
+  
+      # Default location - restricted access
+      location / {
+        allow 127.0.0.1;
+        allow 172.16.0.0/12;
+        deny all;
+        proxy_pass http://broker;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+      }
     }
-    
-    # Public API endpoints
-    location /v1/proxy {
-      proxy_pass http://broker;
-      proxy_set_header Host \$host;
-      proxy_set_header X-Real-IP \$remote_addr;
-      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-      proxy_set_header X-Forwarded-Proto \$scheme;
+  
+    # ZK service proxy on port 3001 for backward compatibility - container access only
+    server {
+      listen 3001;
+      
+      location / {
+        # Only allow access from ECS containers (internal network)
+        allow 127.0.0.1;
+        allow 172.16.0.0/12;    # Docker default bridge networks
+        allow 10.0.0.0/8;       # Docker custom networks  
+        allow 192.168.0.0/16;   # Docker custom networks
+        deny all;
+        
+        proxy_pass http://zk-prover.nodehub.local:3001;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        
+        # Connection pooling and keep-alive
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        
+        # Timeout settings for slow ZK operations
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 120s;
+        proxy_read_timeout 120s;
+      }
     }
-    
-    location /v1/quote {
-      proxy_pass http://broker;
-      proxy_set_header Host \$host;
-      proxy_set_header X-Real-IP \$remote_addr;
-      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-      proxy_Set_header X-Forwarded-Proto \$scheme;
-    }
-
-    # Default location - restricted access
-    location / {
-      allow 127.0.0.1;
-      allow 172.16.0.0/12;
-      deny all;
-      proxy_pass http://broker;
-      proxy_set_header Host \$host;
-      proxy_set_header X-Real-IP \$remote_addr;
-      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-      proxy_set_header X-Forwarded-Proto \$scheme;
-    }
-  }
-}
-`;
+  }`;
 
 
   const configYaml = `# 0G Serving Broker Configuration
 allowOrigins:
   - "*"
 
-contractAddress: "${walletAddress}"
+contractAddress: "0x0165878A594ca255338adfa4d48449f69242Eb8F"
 
 database:
   provider: root:12345678@tcp(${process.env.MYSQL_HOST}:${process.env.MYSQL_PORT})/${process.env.MYSQL_DATABASE}?charset=utf8mb4&parseTime=true
@@ -506,10 +533,6 @@ service:
   type: "chatbot"
   model: "llama-3.3-70b-instruct"
   verifiability: "TeeML"
-
-zk:
-  provider: "${process.env.ZK_PROVER_URL}"
-  requestLength: 40
 `;
 
   // Upload config files to S3
