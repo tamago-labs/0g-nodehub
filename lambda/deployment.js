@@ -173,7 +173,6 @@ async function createMultiContainerTaskDefinition(deploymentId) {
           }
         }
       },
-  
       // Container 1: Hardhat Node with Contracts
       {
         name: 'hardhat-node-with-contract',
@@ -182,10 +181,8 @@ async function createMultiContainerTaskDefinition(deploymentId) {
         portMappings: [{ containerPort: 8545, protocol: 'tcp' }],
         environment: [
           { name: 'DEPLOYMENT_ID', value: deploymentId },
-          // Add memory limit for contract compilation
           { name: 'NODE_OPTIONS', value: '--max-old-space-size=2048' }
         ],
-        // Increase memory allocation for this container specifically
         memoryReservation: 512,
         logConfiguration: {
           logDriver: 'awslogs',
@@ -198,10 +195,10 @@ async function createMultiContainerTaskDefinition(deploymentId) {
         },
         healthCheck: {
           command: ['CMD-SHELL', '/usr/local/bin/healthcheck.sh'],
-          interval: 30,  
-          timeout: 15,   
-          retries: 10, 
-          startPeriod: 120  
+          interval: 30,
+          timeout: 15,
+          retries: 10,
+          startPeriod: 120
         },
         dependsOn: [
           {
@@ -210,7 +207,87 @@ async function createMultiContainerTaskDefinition(deploymentId) {
           }
         ]
       },
-      // Container 2: 0g-serving-provider-broker
+      // Container 2: Single ZK Service
+      {
+        name: 'zk-prover',
+        image: 'ghcr.io/0glabs/zk:0.2.1',
+        essential: true,
+        portMappings: [{ containerPort: 3001, protocol: 'tcp' }],
+        environment: [
+          { name: 'JS_PROVER_PORT', value: '3001' }
+        ],
+        logConfiguration: {
+          logDriver: 'awslogs',
+          options: {
+            'awslogs-group': '/ecs/nodehub',
+            'awslogs-region': process.env.AWS_REGION || 'ap-southeast-1',
+            'awslogs-stream-prefix': `${deploymentId}-zk`,
+            'awslogs-create-group': 'true'
+          }
+        },
+        healthCheck: {
+          command: ['CMD-SHELL', 'curl -f http://localhost:3001/sign-keypair'],
+          interval: 30,
+          timeout: 10,
+          retries: 10,
+          startPeriod: 60
+        },
+        dependsOn: [
+          {
+            containerName: 'config-init',
+            condition: 'SUCCESS'
+          }
+        ]
+      }, 
+      // Container 3: nginx
+      {
+        name: 'nginx',
+        image: 'nginx:1.27.0',
+        essential: true,
+        portMappings: [{ containerPort: 80, protocol: 'tcp' }],
+        mountPoints: [
+          {
+            sourceVolume: 'shared-config',
+            containerPath: '/etc/nginx',
+            readOnly: true
+          }
+        ],
+        command: [
+          '/bin/bash',
+          '-c',
+          'while [ ! -f /etc/nginx/nginx.conf ]; do echo "Waiting for nginx.conf..."; sleep 2; done && ' +
+          'echo "Found nginx.conf, starting nginx..." && ' +
+          'nginx -g "daemon off;"'
+        ],
+        logConfiguration: {
+          logDriver: 'awslogs',
+          options: {
+            'awslogs-group': '/ecs/nodehub',
+            'awslogs-region': process.env.AWS_REGION || 'ap-southeast-1',
+            'awslogs-stream-prefix': `${deploymentId}-nginx`,
+            'awslogs-create-group': 'true'
+          }
+        },
+        healthCheck: {
+          command: ['CMD-SHELL', 'curl -f http://localhost:80/stub_status'],
+          interval: 30,
+          timeout: 5,
+          retries: 3,
+          startPeriod: 30
+        },
+        dependsOn: [
+          {
+            containerName: 'config-init',
+            condition: 'SUCCESS'
+          },
+          {
+            containerName: 'zk-prover',
+            condition: 'HEALTHY'
+          }
+        ]
+      },
+
+      // Container 4: 0g-serving-provider-broker
       {
         name: '0g-serving-provider-broker',
         image: 'ghcr.io/0glabs/0g-serving-broker:0.2.1',
@@ -246,7 +323,7 @@ async function createMultiContainerTaskDefinition(deploymentId) {
           }
         },
         healthCheck: {
-          command: ['CMD-SHELL', 'curl -f http://localhost:3080/health || exit 1'],
+          command: ['CMD-SHELL', 'test -L /proc/1/exe && readlink /proc/1/exe | grep -q broker'],
           interval: 30,
           timeout: 10,
           retries: 3,
@@ -260,17 +337,21 @@ async function createMultiContainerTaskDefinition(deploymentId) {
           {
             containerName: 'hardhat-node-with-contract',
             condition: 'HEALTHY'
+          },
+          {
+            containerName: 'nginx',
+            condition: 'HEALTHY'
           }
         ]
       },
-      // Container 3: 0g-serving-provider-event
+      // Container 5: 0g-serving-provider-event
       {
         name: '0g-serving-provider-event',
         image: 'ghcr.io/0glabs/0g-serving-broker:0.2.1',
         essential: true,
         environment: [
           { name: 'CONFIG_FILE', value: '/etc/configs/config.yaml' },
-          { name: 'NETWORK', value: 'hardhat' }, // Use Mock TEE
+          { name: 'NETWORK', value: 'hardhat' },
           { name: 'MYSQL_HOST', value: process.env.MYSQL_HOST },
           { name: 'MYSQL_PORT', value: process.env.MYSQL_PORT },
           { name: 'MYSQL_DATABASE', value: process.env.MYSQL_DATABASE },
@@ -305,50 +386,8 @@ async function createMultiContainerTaskDefinition(deploymentId) {
             condition: 'HEALTHY'
           }
         ]
-      }, 
-      // Container 4: nginx
-      {
-        name: 'nginx',
-        image: 'nginx:1.27.0',
-        essential: true,
-        portMappings: [{ containerPort: 80, protocol: 'tcp' }],
-        mountPoints: [
-          {
-            sourceVolume: 'shared-config',
-            containerPath: '/etc/nginx',
-            readOnly: true
-          }
-        ],
-        command: [
-          '/bin/bash',
-          '-c', 
-          'while [ ! -f /etc/nginx/nginx.conf ]; do echo "Waiting for nginx.conf..."; sleep 2; done && ' +
-          'echo "Found nginx.conf, starting nginx..." && ' +
-          'nginx -g "daemon off;"'
-        ],
-        logConfiguration: {
-          logDriver: 'awslogs',
-          options: {
-            'awslogs-group': '/ecs/nodehub',
-            'awslogs-region': process.env.AWS_REGION || 'ap-southeast-1',
-            'awslogs-stream-prefix': `${deploymentId}-nginx`,
-            'awslogs-create-group': 'true'
-          }
-        },
-        healthCheck: {
-          command: ["CMD-SHELL", "curl", "-f", "http://localhost:80/stub_status"],
-          interval: 30,
-          timeout: 5,
-          retries: 3,
-          startPeriod: 30
-        },
-        dependsOn: [
-          {
-            containerName: 'config-init',
-            condition: 'SUCCESS'
-          }
-        ]
       }
+      
     ],
     volumes: [
       {
@@ -403,95 +442,77 @@ async function createConfigFiles(deploymentId, deploymentParams) {
   console.log('Creating config files for:', deploymentId);
 
   const { walletAddress, modelService, modelIdentifier, walletPrivateKey } = deploymentParams;
-
-  // Nginx config template 
+ 
   const nginxConfig = `events { 
-    worker_connections 1024;
+  worker_connections 1024;
+}
+
+http {
+  upstream broker {
+    server localhost:3080;
   }
-  
-  http {
-    upstream broker {
-      server localhost:3080;
-    }
-  
-    server {
-      listen 80;
-      
-      # Health check endpoint
-      location /health {
-        return 200 '{"status":"healthy","service":"nginx-proxy","deployment":"${deploymentId}"}';
-        add_header Content-Type application/json;
-      }
-      
-      # Nginx status endpoint
-      location /stub_status {
-        stub_status on;
-        allow 127.0.0.1;
-        allow 172.16.0.0/12;
-        deny all;
-      }
-      
-      # Public API endpoints
-      location /v1/proxy {
-        proxy_pass http://broker;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-      }
-      
-      location /v1/quote {
-        proxy_pass http://broker;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-      }
-  
-      # Default location - restricted access
-      location / {
-        allow 127.0.0.1;
-        allow 172.16.0.0/12;
-        deny all;
-        proxy_pass http://broker;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-      }
-    }
-  
-    # ZK service proxy on port 3001 for backward compatibility - container access only
-    server {
-      listen 3001;
-      
-      location / {
-        # Only allow access from ECS containers (internal network)
-        allow 127.0.0.1;
-        allow 172.16.0.0/12;    # Docker default bridge networks
-        allow 10.0.0.0/8;       # Docker custom networks  
-        allow 192.168.0.0/16;   # Docker custom networks
-        deny all;
-        
-        proxy_pass http://zk-prover.nodehub.local:3001;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        
-        # Connection pooling and keep-alive
-        proxy_http_version 1.1;
-        proxy_set_header Connection "";
-        
-        # Timeout settings for slow ZK operations
-        proxy_connect_timeout 60s;
-        proxy_send_timeout 120s;
-        proxy_read_timeout 120s;
-      }
-    }
-  }`;
 
+  upstream zk-prover {
+    server localhost:3001;
+  }
 
+  server {
+    listen 80;
+    
+    # Health check endpoint
+    location /health {
+      return 200 '{"status":"healthy","service":"nginx-proxy","deployment":"${deploymentId}"}';
+      add_header Content-Type application/json;
+    }
+    
+    # Nginx status endpoint
+    location /stub_status {
+      stub_status on;
+      allow 127.0.0.1;
+      allow 172.16.0.0/12;
+      deny all;
+    }
+    
+    # Public API endpoints
+    location /v1/proxy {
+      proxy_pass http://broker;
+      proxy_set_header Host \$host;
+      proxy_set_header X-Real-IP \$remote_addr;
+      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+    
+    location /v1/quote {
+      proxy_pass http://broker;
+      proxy_set_header Host \$host;
+      proxy_set_header X-Real-IP \$remote_addr;
+      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+    
+    # ZK service proxy on port 3001
+    location /zk/ {
+      proxy_pass http://zk-prover/;
+      proxy_set_header Host \$host;
+      proxy_set_header X-Real-IP \$remote_addr;
+    }
+    
+    # Default location - restricted access
+    location / {
+      allow 127.0.0.1;
+      allow 172.16.0.0/12;
+      deny all;
+      proxy_pass http://broker;
+      proxy_set_header Host \$host;
+      proxy_set_header X-Real-IP \$remote_addr;
+      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+  }
+}
+`;
+
+ 
   const configYaml = `# 0G Serving Broker Configuration
 allowOrigins:
   - "*"

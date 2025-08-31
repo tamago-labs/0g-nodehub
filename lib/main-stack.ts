@@ -17,7 +17,7 @@ import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import * as servicediscovery from 'aws-cdk-lib/aws-servicediscovery';
 import { Construct } from 'constructs';
-import { ZKServices } from './constructs/zk-services';
+// import { ZKServices } from './constructs/zk-services';
 
 export class MainStack extends cdk.Stack {
     public readonly bucket: s3.Bucket;
@@ -30,7 +30,7 @@ export class MainStack extends cdk.Stack {
     public readonly alb: elbv2.ApplicationLoadBalancer;
     public readonly rdsInstance: rds.DatabaseInstance;
     public readonly namespace: servicediscovery.PrivateDnsNamespace;
-    public readonly zkServices: ZKServices;
+    // public readonly zkServices: ZKServices;
     public readonly configBucket: s3.Bucket;
 
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -147,14 +147,21 @@ export class MainStack extends cdk.Stack {
         // Allow HTTP traffic from anywhere
         containerSecurityGroup.addIngressRule(
             ec2.Peer.anyIpv4(),
-            ec2.Port.tcp(3000),
+            ec2.Port.tcp(80),
             'Allow HTTP traffic to containers'
         );
 
         containerSecurityGroup.addIngressRule(
             albSecurityGroup,
-            ec2.Port.tcp(3000),
+            ec2.Port.tcp(80),
             'Allow ALB to reach containers'
+        );
+
+        // Allow internal communication between containers
+        containerSecurityGroup.addIngressRule(
+            containerSecurityGroup,
+            ec2.Port.tcpRange(3000, 8545),
+            'Allow internal container communication'
         );
 
         // Add explicit outbound rules for ECR and CloudWatch access
@@ -279,13 +286,13 @@ export class MainStack extends cdk.Stack {
         // SHARED ZK SERVICES
         // ========================================
 
-        this.zkServices = new ZKServices(this, 'ZKServices', {
-            cluster: this.cluster,
-            vpc,
-            containerSecurityGroup,
-            namespace: this.namespace,
-            ecsLogGroup
-        });
+        // this.zkServices = new ZKServices(this, 'ZKServices', {
+        //     cluster: this.cluster,
+        //     vpc,
+        //     containerSecurityGroup,
+        //     namespace: this.namespace,
+        //     ecsLogGroup
+        // });
 
         // ========================================
         // LAMBDA FUNCTIONS
