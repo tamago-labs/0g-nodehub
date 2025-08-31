@@ -1,342 +1,413 @@
 "use client"
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Loader2, Bot, User, Copy, CheckCircle, AlertCircle, Play, Zap, Clock } from 'lucide-react';
+import { Send, Loader2, Bot, User, Copy, CheckCircle, AlertCircle, Play, Zap, Clock, ChevronDown, RefreshCw } from 'lucide-react';
+import { useAccount } from 'wagmi';
+import { deploymentService } from '@/lib/api';
+import { useToast } from '@/contexts/ToastContext';
+import { formatModelName } from '@/lib/utils';
 
 const Playground = () => {
+  const { address, isConnected } = useAccount();
+  const toast = useToast();
+  const [selectedNodeId, setSelectedNodeId] = useState('');
+  const [selectedNode, setSelectedNode] = useState<any>(null);
+  const [availableNodes, setAvailableNodes] = useState<any[]>([]);
+  const [loadingNodes, setLoadingNodes] = useState(false);
+  const [messages, setMessages] = useState<any[]>([]);
+  const [inputMessage, setInputMessage] = useState('');
+  const [sending, setSending] = useState(false);
+  const messagesEndRef = useRef<any>(null);
 
-    const [deploymentId, setDeploymentId] = useState('');
-    const [nodeLoaded, setNodeLoaded] = useState(false);
-    const [loading, setLoading] = useState(false);
-    const [messages, setMessages] = useState<any>([]);
-    const [inputMessage, setInputMessage] = useState('');
-    const [sending, setSending] = useState(false);
-    const [nodeInfo, setNodeInfo] = useState<any>(null);
-    const messagesEndRef = useRef<any>(null);
+  // Load user's deployments when wallet is connected
+  useEffect(() => {
+    if (isConnected && address) {
+      loadAvailableNodes();
+    } else {
+      setAvailableNodes([]);
+      setSelectedNode(null);
+      setSelectedNodeId('');
+      setMessages([]);
+    }
+  }, [isConnected, address]);
 
-    // Mock node data
-    const mockNodes : any = {
-        'dp-7f3a9b2c8e1d': {
-            deploymentId: 'dp-7f3a9b2c8e1d',
-            aiModel: 'Llama 3.3 (llama-3.3-70b-instruct)',
-            status: 'active',
-            endpoint: 'https://node-001.0gnodehub.com/api/v1/inference'
+  const loadAvailableNodes = async () => {
+    if (!address) return;
+    
+    setLoadingNodes(true);
+    try {
+      const response = await deploymentService.getNodes(address);
+      // Filter for active/deployed nodes only
+      // const activeNodes = response.deployments?.filter(
+      //   (node: any) => node.status.toLowerCase() === 'active' || node.status.toLowerCase() === 'deployed'
+      // ) || [];
+      setAvailableNodes(response.deployments);
+    } catch (error) {
+      console.error('Error loading nodes:', error);
+      toast.error('Failed to load your nodes');
+    } finally {
+      setLoadingNodes(false);
+    }
+  };
+
+  const handleNodeSelection = (nodeId: string) => {
+    const node = availableNodes.find(n => n.deploymentId === nodeId);
+    if (node) {
+      setSelectedNodeId(nodeId);
+      setSelectedNode(node);
+      setMessages([{
+        id: Date.now(),
+        type: 'system',
+        content: `Connected to ${formatModelName(node.modelIdentifier)} (${node.deploymentId}). You can now start chatting!`,
+        timestamp: new Date()
+      }]);
+    }
+  };
+
+  const sendMessage = async () => {
+    if (!inputMessage.trim() || sending || !selectedNode) return;
+
+    const userMessage = {
+      id: Date.now(),
+      type: 'user',
+      content: inputMessage,
+      timestamp: new Date()
+    };
+
+    setMessages(prev => [...prev, userMessage]);
+    setInputMessage('');
+    setSending(true);
+
+    try {
+      // Call the 0G Serving Broker API
+      const response = await fetch(`${selectedNode.publicEndpoint}/v1/proxy/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          // For now, we'll try without authentication headers
+          // In production, these would need proper wallet signing
+          // 'Address': address,
+          // 'Fee': '1000',
+          // 'Input-Fee': '100',
+          // 'Nonce': '1',
+          // 'Request-Hash': '0x...',
+          // 'Signature': '...'
         },
-        'dp-4c8d9a1b5f7e': {
-            deploymentId: 'dp-4c8d9a1b5f7e',
-            aiModel: 'DeepSeek R1 (DeepSeek-R1)',
-            status: 'active',
-            endpoint: 'https://node-002.0gnodehub.com/api/v1/inference'
-        }
-    };
-
-    const loadNode = async () => {
-        if (!deploymentId.trim()) return;
-
-        setLoading(true);
-        setMessages([]);
-
-        // Simulate API call to load node
-        setTimeout(() => {
-            const node = mockNodes[deploymentId];
-            if (node) {
-                setNodeInfo(node);
-                setNodeLoaded(true);
-                setMessages([
-                    {
-                        id: 1,
-                        type: 'system',
-                        content: `Connected to ${node.aiModel}. You can now start chatting with your inference node.`,
-                        timestamp: new Date()
-                    }
-                ]);
-            } else {
-                setMessages([
-                    {
-                        id: 1,
-                        type: 'error',
-                        content: `Node with deployment ID "${deploymentId}" not found or not accessible.`,
-                        timestamp: new Date()
-                    }
-                ]);
-                setNodeLoaded(false);
+        body: JSON.stringify({
+          model: selectedNode.modelIdentifier,
+          messages: [
+            {
+              role: 'user',
+              content: inputMessage
             }
-            setLoading(false);
-        }, 1500);
-    };
+          ],
+          stream: false
+        })
+      });
 
-    const sendMessage = async () => {
-        if (!inputMessage.trim() || sending || !nodeLoaded) return;
+      if (!response.ok) {
+        throw new Error(`API Error: ${response.status} ${response.statusText}`);
+      }
 
-        const userMessage = {
-            id: Date.now(),
-            type: 'user',
-            content: inputMessage,
-            timestamp: new Date()
-        };
+      const data = await response.json();
+      
+      const aiResponse = {
+        id: Date.now() + 1,
+        type: 'assistant',
+        content: data.choices?.[0]?.message?.content || 'No response received',
+        timestamp: new Date(),
+        model: data.model,
+        usage: data.usage
+      };
 
-        setMessages((prev: any) => [...prev, userMessage]);
-        setInputMessage('');
-        setSending(true);
+      setMessages(prev => [...prev, aiResponse]);
+      
+    } catch (error) {
+      console.error('Chat error:', error);
+      const errorMessage = {
+        id: Date.now() + 1,
+        type: 'error',
+        content: `Failed to get response: ${error instanceof Error ? error.message : 'Unknown error'}. Note: This endpoint may require authentication headers for production use.`,
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setSending(false);
+    }
+  };
 
-        // Simulate AI response
-        setTimeout(() => {
-            const aiResponse = {
-                id: Date.now() + 1,
-                type: 'assistant',
-                content: generateMockResponse(userMessage.content, nodeInfo?.aiModel),
-                timestamp: new Date()
-            };
-            setMessages((prev: any) => [...prev, aiResponse]);
-            setSending(false);
-        }, Math.random() * 2000 + 1000);
-    };
+  const copyMessage = (content: string) => {
+    navigator.clipboard.writeText(content);
+    toast.success('Message copied to clipboard');
+  };
 
-    const generateMockResponse = (userInput: any, model: any) => {
-        const responses = {
-            'Llama 3.3': [
-                "I'm Llama 3.3, running on your 0G inference node. How can I help you today?",
-                "That's an interesting question! Let me think about that...",
-                "Based on my training, I can provide insights on a wide range of topics.",
-                "I'm powered by Meta's latest language model architecture with 70B parameters."
-            ],
-            'DeepSeek R1': [
-                "Hello! I'm DeepSeek R1, specialized in reasoning and mathematical tasks.",
-                "I excel at logical reasoning and complex problem-solving. What would you like to explore?",
-                "My reasoning capabilities allow me to break down complex problems step by step.",
-                "I'm particularly strong in mathematics, coding, and analytical thinking."
-            ]
-        };
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  };
 
-        const modelKey = model?.includes('Llama') ? 'Llama 3.3' : 'DeepSeek R1';
-        const modelResponses = responses[modelKey] || responses['Llama 3.3'];
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
-        if (userInput.toLowerCase().includes('hello') || userInput.toLowerCase().includes('hi')) {
-            return modelResponses[0];
-        }
-
-        return modelResponses[Math.floor(Math.random() * modelResponses.length)];
-    };
-
-    const copyMessage = (content: any) => {
-        navigator.clipboard.writeText(content);
-    };
-
-    const handleKeyPress = (e: any) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            sendMessage();
-        }
-    };
-
-    useEffect(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [messages]);
-
-    // Auto-load from URL parameter (simulate)
-    useEffect(() => {
-        const urlParams = new URLSearchParams(window.location.search);
-        const paramDeploymentId = urlParams.get('deploymentId');
-        if (paramDeploymentId) {
-            setDeploymentId(paramDeploymentId);
-        }
-    }, []);
-
+  // Show wallet connection warning if not connected
+  if (!isConnected) {
     return (
-        <div className="w-full max-w-7xl flex flex-col mx-auto p-6">
-            {/* Node Loader */}
-            {!nodeLoaded && (
-                <div className="bg-gradient-to-br from-black to-gray-950 border border-gray-800 rounded-xl p-6 mb-6">
-                    <h2 className="text-lg font-semibold text-white mb-4">Load Node</h2>
-                    <div className="flex space-x-4">
-                        <input
-                            type="text"
-                            value={deploymentId}
-                            onChange={(e) => setDeploymentId(e.target.value)}
-                            placeholder="Enter deployment ID (e.g., dp-7f3a9b2c8e1d)"
-                            className="flex-1 px-4 py-3 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                            disabled={loading}
-                        />
-                        <button
-                            onClick={loadNode}
-                            disabled={loading || !deploymentId.trim()}
-                            className={`flex items-center space-x-2 px-6 py-3 rounded-lg font-medium transition-all duration-200 ${loading || !deploymentId.trim()
-                                    ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
-                                    : 'bg-purple-600 text-white hover:bg-purple-700 shadow-lg hover:shadow-purple-500/25'
-                                }`}
-                        >
-                            {loading ? (
-                                <Loader2 className="w-5 h-5 animate-spin" />
-                            ) : (
-                                <Play className="w-5 h-5" />
-                            )}
-                            <span>{loading ? 'Loading...' : 'Load Node'}</span>
-                        </button>
-                    </div>
-
-                    {/* Quick Load Examples */}
-                    <div className="mt-6">
-                        <p className="text-sm text-gray-400 mb-3">Quick load examples:</p>
-                        <div className="flex flex-wrap gap-3">
-                            <button
-                                onClick={() => setDeploymentId('dp-7f3a9b2c8e1d')}
-                                className="px-4 py-2 text-sm bg-gray-900 text-gray-300 rounded-lg hover:bg-gray-800 border border-gray-700 hover:border-purple-500 transition-all duration-200"
-                                disabled={loading}
-                            >
-                                dp-7f3a9b2c8e1d (Llama 3.3)
-                            </button>
-                            <button
-                                onClick={() => setDeploymentId('dp-4c8d9a1b5f7e')}
-                                className="px-4 py-2 text-sm bg-gray-900 text-gray-300 rounded-lg hover:bg-gray-800 border border-gray-700 hover:border-purple-500 transition-all duration-200"
-                                disabled={loading}
-                            >
-                                dp-4c8d9a1b5f7e (DeepSeek R1)
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Node Info Bar */}
-            {nodeLoaded && nodeInfo && (
-                <div className="bg-green-900/20 border border-green-600/30 rounded-xl p-4 mb-6">
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-3">
-                            <div className="w-3 h-3 bg-green-400 rounded-full animate-pulse"></div>
-                            <div>
-                                <p className="font-medium text-green-300">Connected to {nodeInfo.deploymentId}</p>
-                                <p className="text-sm text-green-200">{nodeInfo.aiModel}</p>
-                            </div>
-                        </div>
-                        <button
-                            onClick={() => {
-                                setNodeLoaded(false);
-                                setNodeInfo(null);
-                                setMessages([]);
-                            }}
-                            className="text-green-300 hover:text-green-100 text-sm font-medium px-3 py-1 rounded-lg hover:bg-green-800/20 transition-all duration-200"
-                        >
-                            Disconnect
-                        </button>
-                    </div>
-                </div>
-            )}
-
-            {/* Chat Container */}
-            <div className="flex-1 bg-gradient-to-br from-black to-gray-950 border border-gray-800 rounded-xl flex flex-col overflow-hidden">
-                {/* Messages */}
-                <div className="flex-1 overflow-y-auto p-6 space-y-6 sidebar-scroll">
-                    {messages.length === 0 && nodeLoaded && (
-                        <div className="text-center text-gray-500 py-12">
-                            <Bot className="w-16 h-16 mx-auto mb-6 text-gray-600 opacity-50" />
-                            <p className="text-lg text-white mb-2">Start a conversation with your inference node!</p>
-                            <p className="text-sm">Type a message below to begin testing your AI model.</p>
-                        </div>
-                    )}
-
-                    {messages.map((message: any) => (
-                        <div key={message.id} className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}>
-                            <div className={`flex space-x-4 max-w-4xl ${message.type === 'user' ? 'flex-row-reverse space-x-reverse' : ''}`}>
-                                <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${message.type === 'user'
-                                        ? 'bg-purple-600'
-                                        : message.type === 'system'
-                                            ? 'bg-gray-600'
-                                            : message.type === 'error'
-                                                ? 'bg-red-600'
-                                                : 'bg-gray-700'
-                                    }`}>
-                                    {message.type === 'user' ? (
-                                        <User className="w-5 h-5 text-white" />
-                                    ) : message.type === 'error' ? (
-                                        <AlertCircle className="w-5 h-5 text-white" />
-                                    ) : (
-                                        <Bot className="w-5 h-5 text-white" />
-                                    )}
-                                </div>
-                                <div className={`flex-1 ${message.type === 'user' ? 'text-right' : ''}`}>
-                                    <div className={`inline-block px-4 py-3 rounded-xl max-w-full ${message.type === 'user'
-                                            ? 'bg-purple-600 text-white'
-                                            : message.type === 'system'
-                                                ? 'bg-gray-800 text-gray-200 border border-gray-700'
-                                                : message.type === 'error'
-                                                    ? 'bg-red-900/30 text-red-300 border border-red-600/30'
-                                                    : 'bg-gray-800 text-white border border-gray-700'
-                                        }`}>
-                                        <p className="whitespace-pre-wrap">{message.content}</p>
-                                    </div>
-                                    <div className="flex items-center space-x-3 mt-2">
-                                        <p className="text-xs text-gray-500">
-                                            {message.timestamp.toLocaleTimeString()}
-                                        </p>
-                                        {message.type === 'assistant' && (
-                                            <button
-                                                onClick={() => copyMessage(message.content)}
-                                                className="text-gray-500 hover:text-gray-300 transition-colors duration-200"
-                                            >
-                                                <Copy className="w-4 h-4" />
-                                            </button>
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    ))}
-
-                    {sending && (
-                        <div className="flex justify-start">
-                            <div className="flex space-x-4 max-w-4xl">
-                                <div className="flex-shrink-0 w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center">
-                                    <Bot className="w-5 h-5 text-white" />
-                                </div>
-                                <div className="flex-1">
-                                    <div className="inline-block px-4 py-3 rounded-xl bg-gray-800 text-white border border-gray-700">
-                                        <div className="flex items-center space-x-3">
-                                            <Loader2 className="w-5 h-5 animate-spin text-purple-400" />
-                                            <span>AI is thinking...</span>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    <div ref={messagesEndRef} />
-                </div>
-
-                {/* Input Area */}
-                {nodeLoaded && (
-                    <div className="border-t border-gray-800 p-6 bg-gradient-to-r from-gray-950 to-black">
-                        <div className="flex space-x-4">
-                            <textarea
-                                value={inputMessage}
-                                onChange={(e) => setInputMessage(e.target.value)}
-                                onKeyPress={handleKeyPress}
-                                placeholder="Type your message... (Press Enter to send)"
-                                className="flex-1 px-4 py-3 bg-black border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none"
-                                rows={1}
-                                disabled={sending}
-                            />
-                            <button
-                                onClick={sendMessage}
-                                disabled={sending || !inputMessage.trim()}
-                                className={`flex items-center space-x-2 px-6 py-3 rounded-lg font-medium transition-all duration-200 ${sending || !inputMessage.trim()
-                                        ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
-                                        : 'bg-purple-600 text-white hover:bg-purple-700 shadow-lg hover:shadow-purple-500/25'
-                                    }`}
-                            >
-                                {sending ? (
-                                    <Loader2 className="w-5 h-5 animate-spin" />
-                                ) : (
-                                    <Send className="w-5 h-5" />
-                                )}
-                                <span>Send</span>
-                            </button>
-                        </div>
-                    </div>
-                )}
-            </div>
+      <div className="w-full max-w-7xl mx-auto p-6">
+        <div className="text-center">
+          <div className="mb-8">
+            <h1 className="text-3xl font-bold text-white mb-2">AI Playground</h1>
+            <p className="text-gray-400">Test and interact with your deployed inference nodes</p>
+          </div>
+          
+          <div className="bg-gradient-to-br from-yellow-900/20 to-yellow-800/20 border border-yellow-600/30 rounded-xl p-8 max-w-md mx-auto">
+             
+            <h3 className="text-lg font-semibold text-yellow-300 mb-2">Wallet Connection Required</h3>
+            <p className="text-yellow-200 mb-4">
+              Please connect your wallet to access your deployed nodes.
+            </p>
+          </div>
         </div>
+      </div>
     );
+  }
+
+  return (
+    <div className="w-full max-w-7xl mx-auto p-6">
+      {/* Header */}
+      <div className="mb-6">
+        <h1 className="text-3xl font-bold text-white mb-2">AI Playground</h1>
+        <p className="text-gray-400">Select one of your deployed nodes and start chatting</p>
+      </div>
+
+      {/* Node Selection */}
+      <div className="bg-gradient-to-br from-gray-900 to-black border border-gray-800 rounded-xl p-6 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-white">Select Your Node</h2>
+          <button
+            onClick={loadAvailableNodes}
+            disabled={loadingNodes}
+            className="flex items-center space-x-2 text-gray-400 hover:text-white transition-colors"
+          >
+            <RefreshCw className={`w-4 h-4 ${loadingNodes ? 'animate-spin' : ''}`} />
+            <span>Refresh</span>
+          </button>
+        </div>
+
+        {loadingNodes ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="w-6 h-6 text-purple-500 animate-spin mr-3" />
+            <span className="text-gray-300">Loading your nodes...</span>
+          </div>
+        ) : availableNodes.length === 0 ? (
+          <div className="text-center py-8">
+            <div className="mb-4">
+              <Bot className="w-12 h-12 text-gray-600 mx-auto" />
+            </div>
+            <h3 className="text-lg font-semibold text-white mb-2">No Active Nodes Found</h3>
+            <p className="text-gray-400 mb-4">
+              You need to deploy an active inference node first to use the playground.
+            </p>
+            <button
+              onClick={() => window.location.href = '/account'}
+              className="bg-purple-600 text-white px-6 py-3 rounded-xl font-medium hover:bg-purple-700 transition-all duration-200"
+            >
+              Go to Account Portal
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {availableNodes.map((node) => (
+              <div
+                key={node.deploymentId}
+                className={`border rounded-lg p-4 cursor-pointer transition-all ${
+                  selectedNodeId === node.deploymentId
+                    ? 'border-purple-600 bg-purple-900/20 ring-2 ring-purple-500/20'
+                    : 'border-gray-700 hover:border-gray-600 hover:bg-gray-800/50'
+                }`}
+                onClick={() => handleNodeSelection(node.deploymentId)}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center space-x-3 mb-2">
+                      <CheckCircle className="w-5 h-5 text-green-400" />
+                      <h3 className="font-medium text-white">{node.deploymentId}</h3>
+                      {selectedNodeId === node.deploymentId && (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-600 text-white">
+                          Selected
+                        </span>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <span className="text-gray-500">Model: </span>
+                        <span className="text-white">{formatModelName(node.modelIdentifier)}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-500">Status: </span>
+                        <span className="text-green-400">{node.status}</span>
+                      </div>
+                    </div>
+                    {node.publicEndpoint && (
+                      <div className="mt-2">
+                        <span className="text-gray-500 text-xs">Endpoint: </span>
+                        <code className="text-xs text-gray-300">{node.publicEndpoint}</code>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Chat Interface */}
+      {selectedNode ? (
+        <div className="bg-gradient-to-br from-gray-900 to-black border border-gray-800 rounded-xl flex flex-col overflow-hidden" style={{ height: '600px' }}>
+          {/* Chat Header */}
+          <div className="px-6 py-4 border-b border-gray-800 bg-gray-900/50">
+            <div className="flex items-center space-x-3">
+              <div className="w-3 h-3 bg-green-400 rounded-full animate-pulse"></div>
+              <div>
+                <h3 className="font-medium text-white">
+                  {formatModelName(selectedNode.modelIdentifier)}
+                </h3>
+                <p className="text-sm text-gray-400">{selectedNode.deploymentId}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Messages */}
+          <div className="flex-1 overflow-y-auto p-6 space-y-6 sidebar-scroll">
+            {messages.length === 0 && (
+              <div className="text-center text-gray-500 py-12">
+                <Bot className="w-16 h-16 mx-auto mb-6 text-gray-600 opacity-50" />
+                <p className="text-lg text-white mb-2">Ready to chat!</p>
+                <p className="text-sm">Your {formatModelName(selectedNode.modelIdentifier)} model is ready to respond.</p>
+              </div>
+            )}
+
+            {messages.map((message) => (
+              <div key={message.id} className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div className={`flex space-x-4 max-w-4xl ${message.type === 'user' ? 'flex-row-reverse space-x-reverse' : ''}`}>
+                  <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${
+                    message.type === 'user'
+                      ? 'bg-purple-600'
+                      : message.type === 'system'
+                        ? 'bg-gray-600'
+                        : message.type === 'error'
+                          ? 'bg-red-600'
+                          : 'bg-gray-700'
+                  }`}>
+                    {message.type === 'user' ? (
+                      <User className="w-5 h-5 text-white" />
+                    ) : message.type === 'error' ? (
+                      <AlertCircle className="w-5 h-5 text-white" />
+                    ) : (
+                      <Bot className="w-5 h-5 text-white" />
+                    )}
+                  </div>
+                  <div className={`flex-1 ${message.type === 'user' ? 'text-right' : ''}`}>
+                    <div className={`inline-block px-4 py-3 rounded-xl max-w-full ${
+                      message.type === 'user'
+                        ? 'bg-purple-600 text-white'
+                        : message.type === 'system'
+                          ? 'bg-gray-800 text-gray-200 border border-gray-700'
+                          : message.type === 'error'
+                            ? 'bg-red-900/30 text-red-300 border border-red-600/30'
+                            : 'bg-gray-800 text-white border border-gray-700'
+                    }`}>
+                      <p className="whitespace-pre-wrap">{message.content}</p>
+                      {message.model && (
+                        <p className="text-xs opacity-70 mt-2">Model: {message.model}</p>
+                      )}
+                    </div>
+                    <div className="flex items-center space-x-3 mt-2">
+                      <p className="text-xs text-gray-500">
+                        {message.timestamp.toLocaleTimeString()}
+                      </p>
+                      {message.type === 'assistant' && (
+                        <button
+                          onClick={() => copyMessage(message.content)}
+                          className="text-gray-500 hover:text-gray-300 transition-colors duration-200"
+                        >
+                          <Copy className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            {sending && (
+              <div className="flex justify-start">
+                <div className="flex space-x-4 max-w-4xl">
+                  <div className="flex-shrink-0 w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center">
+                    <Bot className="w-5 h-5 text-white" />
+                  </div>
+                  <div className="flex-1">
+                    <div className="inline-block px-4 py-3 rounded-xl bg-gray-800 text-white border border-gray-700">
+                      <div className="flex items-center space-x-3">
+                        <Loader2 className="w-5 h-5 animate-spin text-purple-400" />
+                        <span>AI is thinking...</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Input Area */}
+          <div className="border-t border-gray-800 p-6 bg-gray-900/50">
+            <div className="flex space-x-4">
+              <textarea
+                value={inputMessage}
+                onChange={(e) => setInputMessage(e.target.value)}
+                onKeyPress={handleKeyPress}
+                placeholder="Type your message... (Press Enter to send)"
+                className="flex-1 px-4 py-3 bg-black border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none"
+                rows={1}
+                disabled={sending}
+              />
+              <button
+                onClick={sendMessage}
+                disabled={sending || !inputMessage.trim()}
+                className={`flex items-center space-x-2 px-6 py-3 rounded-lg font-medium transition-all duration-200 ${
+                  sending || !inputMessage.trim()
+                    ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                    : 'bg-purple-600 text-white hover:bg-purple-700 shadow-lg hover:shadow-purple-500/25'
+                }`}
+              >
+                {sending ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : (
+                  <Send className="w-5 h-5" />
+                )}
+                <span>Send</span>
+              </button>
+            </div>
+            
+            {/* API Info */}
+            <div className="mt-3 text-xs text-gray-500">
+              <p>💡 Currently testing without authentication headers. Production use requires proper wallet signing.</p>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div >
+          
+           
+        </div>
+      )}
+    </div>
+  );
 };
 
 export default Playground;

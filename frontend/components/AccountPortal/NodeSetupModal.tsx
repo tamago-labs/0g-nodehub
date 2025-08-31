@@ -58,19 +58,19 @@ const NodeSetupModal: React.FC<NodeSetupModalProps> = ({ onClose, onSuccess }) =
 
   const models = [
     {
-      id: 'llama-3.3-70b-instruct',
-      name: 'Llama 3.3 70B Instruct',
-      description: 'Meta\'s latest large language model with 70B parameters',
-      specs: '70B parameters • Instruction-tuned • Best for general tasks',
-      recommended: true
-    },
-    {
       id: 'gpt-3.5-turbo',
       name: 'GPT-3.5 Turbo',
       description: 'OpenAI\'s efficient and fast language model',
       specs: 'Fast inference • Cost-effective • Good for most applications',
+      recommended: true
+    },
+    {
+      id: 'llama-3.3-70b-instruct',
+      name: 'Llama 3.3 70B Instruct',
+      description: 'Meta\'s latest large language model with 70B parameters',
+      specs: '70B parameters • Instruction-tuned • Best for general tasks',
       recommended: false
-    }
+    } 
   ];
 
   const handleNext = () => {
@@ -368,7 +368,7 @@ const NodeSetupModal: React.FC<NodeSetupModalProps> = ({ onClose, onSuccess }) =
               <div className="grid grid-cols-2 gap-6">
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Input Token Price (USD)
+                    Input Token Price 
                   </label>
                   <input
                     type="number"
@@ -382,7 +382,7 @@ const NodeSetupModal: React.FC<NodeSetupModalProps> = ({ onClose, onSuccess }) =
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Output Token Price (USD)
+                    Output Token Price  
                   </label>
                   <input
                     type="number"

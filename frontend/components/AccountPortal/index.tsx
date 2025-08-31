@@ -422,7 +422,9 @@ const AccountPortal = () => {
 
             <div className="px-6 py-4 border-t border-gray-800 flex justify-between">
               <button
-                onClick={() => setShowDeleteConfirm(true)}
+                onClick={() => { 
+                  setShowDeleteConfirm(true)
+                }}
                 disabled={deletingNode}
                 className="flex items-center space-x-2 px-4 py-2 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
