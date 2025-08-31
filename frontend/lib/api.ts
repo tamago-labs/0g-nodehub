@@ -120,7 +120,7 @@ class ApiClient {
 }
 
 // Create API client instance
-const apiClient = new ApiClient("https://kcjntn7inf.execute-api.ap-southeast-1.amazonaws.com/prod/");
+const apiClient = new ApiClient("https://p0m1nwx9bh.execute-api.ap-southeast-1.amazonaws.com/prod/");
 
 // Export service functions
 export const deploymentService = {

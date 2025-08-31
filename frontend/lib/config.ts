@@ -1,13 +1,13 @@
 export const config = {
   api: {
-    baseUrl: process.env.NEXT_PUBLIC_API_BASE_URL || 'https://kcjntn7inf.execute-api.ap-southeast-1.amazonaws.com/prod/',
+    baseUrl: process.env.NEXT_PUBLIC_API_BASE_URL || 'https://p0m1nwx9bh.execute-api.ap-southeast-1.amazonaws.com/prod',
   },
   wallet: {
     projectId: process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID || 'demo',
   },
   network: {
     chainId: parseInt(process.env.NEXT_PUBLIC_CHAIN_ID || '16601'),
-    rpcUrl: process.env.NEXT_PUBLIC_RPC_URL || 'https://divine-broken-paper.0g-galileo.quiknode.pro/096a09e4af44054340a9e1502630befe7fa9a828/',
+    rpcUrl: process.env.NEXT_PUBLIC_RPC_URL || 'https://evmrpc-testnet.0g.ai',
   },
   deployment: {
     // Default values from test script
