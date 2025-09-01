@@ -49,6 +49,38 @@ exports.handler = async (event) => {
   }
 };
 
+async function checkHealthEndpoint(publicEndpoint) {
+  try {
+    const healthUrl = `${publicEndpoint}/health`;
+    const response = await fetch(healthUrl, {
+      method: 'GET',
+      timeout: 10000 // 10 second timeout
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      return {
+        healthy: true,
+        status: 'ACTIVE',
+        healthData: data
+      };
+    } else {
+      return {
+        healthy: false,
+        status: 'DEPLOYED', // Service exists but not healthy
+        error: `Health check failed: ${response.status}`
+      };
+    }
+  } catch (error) {
+    console.error('Health check failed:', error.message);
+    return {
+      healthy: false,
+      status: 'DEPLOYED', // Assume service is deployed but not responding
+      error: error.message
+    };
+  }
+}
+
 async function getWalletDeployments(walletAddress, queryParams) {
   try {
     const params = {
@@ -68,14 +100,79 @@ async function getWalletDeployments(walletAddress, queryParams) {
     }
 
     const result = await dynamoClient.send(new QueryCommand(params));
-    const deployments = result.Items ? result.Items.map(item => unmarshall(item)) : [];
+    let deployments = result.Items ? result.Items.map(item => unmarshall(item)) : [];
+
+    // Update status for each deployment
+    const updatedDeployments = await Promise.all(
+      deployments.map(async (deployment) => {
+        try {
+          let updatedDeployment = { ...deployment };
+          let needsUpdate = false;
+
+          // Check ECS service status
+          if (deployment.serviceArn) {
+            const services = await ecsClient.send(new DescribeServicesCommand({
+              cluster: process.env.CLUSTER_NAME,
+              services: [deployment.serviceArn]
+            }));
+
+            if (services.services && services.services.length > 0) {
+              const service = services.services[0];
+              
+              let newStatus = 'DEPLOYING';
+              if (service.status === "ACTIVE" && service.runningCount > 0) {
+                // Service is active, now check health endpoint if available
+                if (deployment.publicEndpoint) {
+                  const healthCheck = await checkHealthEndpoint(deployment.publicEndpoint);
+                  newStatus = healthCheck.status;
+                } else {
+                  newStatus = 'DEPLOYED';
+                }
+              } else if (service.status === "DRAINING") {
+                newStatus = 'DELETING';
+              } else if (service.runningCount === 0 && service.deployments.length === 0) {
+                newStatus = 'FAILED';
+              }
+
+              // Update status if changed
+              if (updatedDeployment.status !== newStatus) {
+                updatedDeployment.status = newStatus;
+                updatedDeployment.updatedAt = new Date().toISOString();
+                needsUpdate = true;
+              }
+            }
+          } else if (deployment.publicEndpoint && deployment.status === 'DEPLOYING') {
+            // Check health endpoint directly for deployments without serviceArn
+            const healthCheck = await checkHealthEndpoint(deployment.publicEndpoint);
+            if (healthCheck.healthy && deployment.status !== 'ACTIVE') {
+              updatedDeployment.status = 'ACTIVE';
+              updatedDeployment.updatedAt = new Date().toISOString();
+              needsUpdate = true;
+            }
+          }
+
+          // Update database if status changed
+          if (needsUpdate) {
+            await dynamoClient.send(new PutItemCommand({
+              TableName: process.env.DEPLOYMENTS_TABLE,
+              Item: marshall(updatedDeployment)
+            }));
+          }
+
+          return updatedDeployment;
+        } catch (error) {
+          console.error(`Error updating deployment ${deployment.deploymentId}:`, error);
+          return deployment; // Return original if update fails
+        }
+      })
+    );
 
     return {
       statusCode: 200,
       headers: getCorsHeaders(),
       body: JSON.stringify({
-        deployments,
-        count: deployments.length
+        deployments: updatedDeployments,
+        count: updatedDeployments.length
       })
     };
 
@@ -103,7 +200,7 @@ async function getDeployment(walletAddress, deploymentId, queryParams) {
     let deployment = unmarshall(result.Item);
     let dbNeedsUpdate = false;
 
-    // Get service status if available
+    // Check ECS service status if available
     if (deployment.serviceArn) {
       try {
         const services = await ecsClient.send(new DescribeServicesCommand({
@@ -113,20 +210,31 @@ async function getDeployment(walletAddress, deploymentId, queryParams) {
 
         if (services.services && services.services.length > 0) {
           const service = services.services[0];
-          const actualStatus = service.status === "ACTIVE" && service.runningCount > 0
-            ? "DEPLOYED"
-            : service.status === "DRAINING"
-              ? "DELETING"
-              : "DEPLOYING";
+          
+          let actualStatus = 'DEPLOYING';
+          if (service.status === "ACTIVE" && service.runningCount > 0) {
+            // Check health endpoint if available
+            if (deployment.publicEndpoint) {
+              const healthCheck = await checkHealthEndpoint(deployment.publicEndpoint);
+              actualStatus = healthCheck.status;
+              deployment.healthCheck = healthCheck;
+            } else {
+              actualStatus = 'DEPLOYED';
+            }
+          } else if (service.status === "DRAINING") {
+            actualStatus = 'DELETING';
+          } else if (service.runningCount === 0 && service.deployments.length === 0) {
+            actualStatus = 'FAILED';
+          }
 
-          // Compare with DB
+          // Update if status changed
           if (deployment.status !== actualStatus) {
             deployment.status = actualStatus;
             deployment.updatedAt = new Date().toISOString();
             dbNeedsUpdate = true;
           }
 
-          // Keep live counts in response (not necessarily stored)
+          // Keep live service info
           deployment.serviceStatus = {
             runningCount: service.runningCount,
             pendingCount: service.pendingCount,
@@ -137,6 +245,16 @@ async function getDeployment(walletAddress, deploymentId, queryParams) {
         }
       } catch (serviceError) {
         console.error('Error fetching service status:', serviceError);
+      }
+    } else if (deployment.publicEndpoint && deployment.status === 'DEPLOYING') {
+      // Direct health check for deployments without serviceArn
+      const healthCheck = await checkHealthEndpoint(deployment.publicEndpoint);
+      deployment.healthCheck = healthCheck;
+      
+      if (healthCheck.healthy && deployment.status !== 'ACTIVE') {
+        deployment.status = 'ACTIVE';
+        deployment.updatedAt = new Date().toISOString();
+        dbNeedsUpdate = true;
       }
     }
 
