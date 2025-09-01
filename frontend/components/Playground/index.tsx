@@ -7,9 +7,9 @@ import { deploymentService } from '@/lib/api';
 import { useToast } from '@/contexts/ToastContext';
 import { useAsync, useDeployments } from '@/lib/hooks';
 import { formatAddress, formatDate, formatModelName } from '@/lib/utils';
-import { statusConfig } from '@/lib/config';
-import { ethers } from "ethers";
-import { createZGComputeNetworkBroker } from "@0glabs/0g-serving-broker";
+// import { statusConfig } from '@/lib/config';
+// import { ethers } from "ethers";
+// import { createZGComputeNetworkBroker } from "@0glabs/0g-serving-broker";
 
 const Playground = () => {
   const { address, isConnected } = useAccount();
@@ -159,11 +159,11 @@ const Playground = () => {
       // const requestHash = await generateRequestHash(requestData);
       // const signature = await generateSignature(requestHash, signingKey);
 
-      const provider = new ethers.JsonRpcProvider("https://evmrpc-testnet.0g.ai");
-      const wallet = new ethers.Wallet(privateKey || defaultPrivateKey, provider);
-      const broker = await createZGComputeNetworkBroker(wallet);
+      // const provider = new ethers.JsonRpcProvider("https://evmrpc-testnet.0g.ai");
+      // const wallet = new ethers.Wallet(privateKey || defaultPrivateKey, provider);
+      // const broker = await createZGComputeNetworkBroker(wallet);
 
-      console.log("broker:", broker, provider, currentMessage)
+      // console.log("broker:", broker, provider, currentMessage)
 
       // Generate auth headers
       // const headers = await broker.inference.getRequestHeaders(provider, currentMessage);
