@@ -3,7 +3,7 @@
 import React from 'react';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useAccount } from 'wagmi';
-import { Wallet, ChevronDown, ArrowRight, Users, Activity, Layers, Zap } from 'lucide-react';
+import { Wallet, Layers, ChevronDown, ArrowRight, Users, Activity, Zap } from 'lucide-react';
 import Link from 'next/link';
 
 export default function HomePage() {
@@ -19,7 +19,7 @@ export default function HomePage() {
       <header className="sticky top-0 z-40 backdrop-blur-xl bg-black/90 border-b border-gray-800">
         <div className="flex justify-between items-center px-8 py-4">
           <div>
-            <h1 className="text-2xl font-bold text-white">Welcome</h1>
+          <h1 className="text-2xl font-bold text-white">Welcome</h1>
             <p className="text-gray-400 text-sm">Deploy & Manage 0G Network Nodes</p>
           </div>
           
@@ -59,9 +59,8 @@ export default function HomePage() {
                         return (
                           <button
                             onClick={openConnectModal}
-                            className="flex items-center space-x-3 bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded-xl font-medium transition-all duration-200 shadow-lg hover:shadow-purple-500/25"
-                          >
-                            <Wallet className="w-5 h-5" />
+                            className="flex cursor-pointer items-center space-x-3 bg-gradient-to-br from-gray-900 to-black hover:from-gray-800 hover:to-black text-white px-6 py-3 rounded-xl font-medium border border-gray-700 hover:border-gray-600 transition-all duration-200 shadow-lg"
+                          > 
                             <span>Connect Wallet</span>
                           </button>
                         );
@@ -81,7 +80,7 @@ export default function HomePage() {
                       return (
                         <div className="flex items-center space-x-3">
                           <div 
-                            className="flex items-center space-x-3 bg-gray-900 hover:bg-gray-800 text-white px-4 py-3 rounded-xl cursor-pointer border border-gray-700 hover:border-purple-500 transition-all duration-200"
+                            className="flex items-center space-x-3 bg-gradient-to-br from-gray-900 to-black hover:from-gray-800 hover:to-black text-white px-4 py-3 rounded-xl cursor-pointer border border-gray-700 hover:border-gray-600 transition-all duration-200"
                             onClick={openAccountModal}
                           >
                             <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
@@ -102,12 +101,12 @@ export default function HomePage() {
       {/* Main Content Area */}
       <main className="p-8">
         <div className="max-w-7xl mx-auto">
-         
+          
 
           {/* Quick Navigation Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             <Link href="/account" className="group">
-              <div className="bg-gradient-to-br from-gray-900 to-black border border-gray-800 hover:border-purple-500 rounded-xl p-6 transition-all duration-200 cursor-pointer">
+              <div className="bg-gradient-to-br from-gray-900 to-black border border-gray-800 hover:border-gray-600 rounded-xl p-6 transition-all duration-200 cursor-pointer">
                 <div className="flex items-center justify-between mb-4">
                   <div className="w-12 h-12 bg-purple-600 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform duration-200">
                     <Users className="w-6 h-6 text-white" />
@@ -120,7 +119,7 @@ export default function HomePage() {
             </Link>
 
             <Link href="/models" className="group">
-              <div className="bg-gradient-to-br from-gray-900 to-black border border-gray-800 hover:border-purple-500 rounded-xl p-6 transition-all duration-200 cursor-pointer">
+              <div className="bg-gradient-to-br from-gray-900 to-black border border-gray-800 hover:border-gray-600 rounded-xl p-6 transition-all duration-200 cursor-pointer">
                 <div className="flex items-center justify-between mb-4">
                   <div className="w-12 h-12 bg-blue-600 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform duration-200">
                     <Layers className="w-6 h-6 text-white" />
@@ -133,7 +132,7 @@ export default function HomePage() {
             </Link>
 
             <Link href="/playground" className="group">
-              <div className="bg-gradient-to-br from-gray-900 to-black border border-gray-800 hover:border-purple-500 rounded-xl p-6 transition-all duration-200 cursor-pointer">
+            <div className="bg-gradient-to-br from-gray-900 to-black border border-gray-800 hover:border-purple-500 rounded-xl p-6 transition-all duration-200 cursor-pointer">
                 <div className="flex items-center justify-between mb-4">
                   <div className="w-12 h-12 bg-green-600 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform duration-200">
                     <Zap className="w-6 h-6 text-white" />
@@ -145,7 +144,6 @@ export default function HomePage() {
               </div>
             </Link>
           </div>
- 
         </div>
       </main>
     </div>

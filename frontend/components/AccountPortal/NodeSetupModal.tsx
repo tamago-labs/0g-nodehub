@@ -21,7 +21,7 @@ const NodeSetupModal: React.FC<NodeSetupModalProps> = ({ onClose, onSuccess }) =
   const [inputPrice, setInputPrice] = useState('0.001');
   const [outputPrice, setOutputPrice] = useState('0.002');
   const [walletAddress, setWalletAddress] = useState(address || '');
-  const [privateKey, setPrivateKey] = useState('');
+  const [privateKey, setPrivateKey] = useState('1234');
   const [showPrivateKey, setShowPrivateKey] = useState(false);
 
   // Auto-populate wallet address when connected
@@ -425,7 +425,7 @@ const NodeSetupModal: React.FC<NodeSetupModalProps> = ({ onClose, onSuccess }) =
                   />
                 </div>
 
-                <div>
+                {/* <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Private Key
                   </label>
@@ -449,7 +449,7 @@ const NodeSetupModal: React.FC<NodeSetupModalProps> = ({ onClose, onSuccess }) =
                       )}
                     </button>
                   </div>
-                </div>
+                </div> */}
               </div>
             </div>
           )}
